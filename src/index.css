@@ -1,0 +1,247 @@
+@import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* ME Vantage Core Color Architecture Tokens */
+  --color-vantage-green: #A6DDB1;
+  --color-canvas-bg: #1E2229;
+  --color-text-primary: #FFFFFF;
+  --color-text-secondary: #94A3B8;
+  
+  /* Luxury Elevation Shadows */
+  --shadow-card: 0 12px 40px 0 rgba(0, 0, 0, 0.3);
+  --shadow-modal: 0 24px 60px 0 rgba(0, 0, 0, 0.5);
+  --font-sans: 'Google Sans', system-ui, -apple-system, sans-serif;
+}
+
+/* Document Viewport Normalization Safeguards */
+html, body, #root {
+  background-color: var(--color-canvas-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Compact Scroll Container Utility Track Overlay */
+.container-scroll-patch::-webkit-scrollbar {
+  width: 6px;
+}
+.container-scroll-patch::-webkit-scrollbar-track {
+  background: transparent;
+}
+.container-scroll-patch::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+
+/* Hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Human-Friendly Sentence Case Standardizer Class */
+.text-human-sentence {
+  text-transform: lowercase;
+}
+.text-human-sentence::first-letter {
+  text-transform: uppercase;
+}
+
+/* Ensure BudgetDetailView sits correctly at the top of the viewport when header/footer are hidden */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) {
+  margin-top: 0px !important;
+}
+
+/* Hide the requested element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(6) > div:nth-of-type(2) > div:nth-of-type(1) {
+  display: none !important;
+}
+
+/* Hide header and footer when the specified window is open */
+/* Removed this rule as it was incorrectly targeting other tabs */
+
+/* Apply requested style changes to the element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > button:nth-of-type(2) {
+  width: 170px;
+}
+
+/* Remove the requested element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) {
+  display: none !important;
+}
+/* Apply requested style changes to the back button icon */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > button:nth-of-type(1) > svg:nth-of-type(1) {
+  height: 30px;
+  width: 30px;
+  margin-left: 20px;
+  margin-top: 20px;
+}
+
+/* Style changes for selected element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(6) > div:nth-of-type(2) > div:nth-of-type(1) {
+}
+
+/* Show and style the spend button */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > button:nth-of-type(1) {
+  display: block !important;
+  font-family: 'Google Sans', sans-serif !important;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+  padding: 8px 16px !important;
+  border-radius: 8px !important;
+  background-color: #A6DDB1 !important;
+  color: #111C2D !important;
+  border: none !important;
+}
+
+/* Adjust sub-category text to be on a new line */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > span:nth-of-type(2) {
+  display: block !important;
+  white-space: normal !important;
+  line-height: 1.2 !important;
+}
+
+/* Apply layout changes for specific elements */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) {
+  margin-right: 0px;
+  margin-left: 0px;
+}
+
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+/* Style changes for button and span */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > button:nth-of-type(1) {
+  background-color: #ffffff !important;
+  border-width: 1px !important;
+  border-style: groove !important;
+  height: 35px !important;
+}
+
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > button:nth-of-type(1) > span:nth-of-type(1) {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  width: 100% !important;
+  text-align: center !important;
+  margin-top: -16px !important;
+}
+
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > span:nth-of-type(2) {
+  margin-top: 15px !important;
+}
+
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(3) > span:nth-of-type(2) {
+  margin-top: 12px !important;
+}
+
+/* Style changes for footer button border */
+div#root:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > footer:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > button:nth-of-type(1) > div:nth-of-type(1) {
+  border-color: #000000 !important;
+}
+
+/* Style changes for streak indicator element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) {
+  font-weight: 700 !important;
+  font-family: 'Google Sans', sans-serif !important;
+}
+
+/* Privacy Mode Balance & Fields Blur */
+body.privacy-blurred .privacy-balance,
+body.privacy-blurred [data-privacy-balance],
+body.privacy-blurred .balance-amount,
+body.privacy-blurred .amount-value,
+body.privacy-blurred [data-amount],
+body.privacy-blurred .privacy-budget-chart,
+body.privacy-blurred .privacy-budget-total,
+body.privacy-blurred .privacy-budget-remaining,
+body.privacy-blurred .analytics-view .recharts-responsive-container,
+body.privacy-blurred .analytics-view .recharts-wrapper,
+body.privacy-blurred .analytics-view svg,
+body.privacy-blurred .analytics-view .chart-bar,
+body.privacy-blurred .analytics-view .text-xl,
+body.privacy-blurred .analytics-view .text-2xl,
+body.privacy-blurred .analytics-view .text-3xl,
+body.privacy-blurred .analytics-view .text-4xl,
+body.privacy-blurred .analytics-view .text-lg {
+  filter: blur(8px) !important;
+  user-select: none !important;
+  pointer-events: none !important;
+  transition: filter 0.25s ease-in-out !important;
+}
+
+
+
+
+
+
+
+/* Style changes from focus mode */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) {
+  margin-top: -20px;
+}
+
+/* Style changes for specific h3 element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > h3:nth-of-type(1) {
+  font-size: 0px !important;
+}
+
+/* Style changes for selected element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) {
+  margin-top: -23px !important;
+}
+
+/* Style changes for selected elements */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) > div:nth-of-type(1) > h2:nth-of-type(1) > span:nth-of-type(1) {
+  font-size: 26px !important;
+}
+
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) > div:nth-of-type(1) > p:nth-of-type(1) {
+  font-size: 11px !important;
+  margin-top: 5px !important;
+}
+
+/* Style changes for selected element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) > div:nth-of-type(2) {
+  background-color: #ffffff !important;
+}
+
+/* Style changes for selected element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > header:nth-of-type(1) {
+  margin-top: 10px !important;
+}
+
+/* Style changes for selected element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(1) {
+  text-align: center !important;
+}
+
+/* Style changes for selected element */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(2) {
+  width: 50px !important;
+}
+
+/* Style changes for selected elements */
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) {
+  margin-top: -3px !important;
+}
+
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > h2:nth-of-type(1) {
+  margin-top: 0px !important;
+}
+
+body.hide-header-footer header,
+body.hide-header-footer nav {
+  display: none !important;
+}
+

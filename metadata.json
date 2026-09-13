@@ -1,0 +1,12 @@
+{
+  "name": "YOUR FINANCES",
+  "description": "A pristine, security-first financial command center officially branded as YOUR FINANCES by ME Vantage, designed with clean Google Sans typography and comprehensive balance sheet integration.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+    "notification"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

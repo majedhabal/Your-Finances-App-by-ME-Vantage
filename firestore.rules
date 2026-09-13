@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow authenticated users to read user profiles and subcollections for household sharing and collaboration
+    match /users/{userId} {
+      allow read, write: if request.auth != null;
+      
+      // Match subcollections under users/{userId}
+      match /{collection}/{document=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+    
+    // Allow public access to shared shopping carts for collaborative link sharing
+    match /sharedCarts/{cartId} {
+      allow read, create, update, delete: if true;
+    }
+
+    // Allow authenticated users to read and write to global configuration
+    match /global_config/{document} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Allow authenticated users to read and write shared invitations
+    match /shared_invitations/{inviteId} {
+      allow read, create, update, delete: if request.auth != null;
+    }
+
+    // Allow authenticated users to read and write admin metrics
+    match /adminMetrics/{metricId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Allow authenticated users to read and write broadcast notifications
+    match /broadcast_notifications/{notificationId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

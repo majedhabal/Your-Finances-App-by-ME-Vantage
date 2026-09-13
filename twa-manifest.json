@@ -1,0 +1,25 @@
+{
+  "host": "yourfinances.me",
+  "name": "Your Finances by ME Vantage",
+  "short_name": "Your Finances",
+  "start_url": "/",
+  "theme_color": "#111C2D",
+  "background_color": "#111C2D",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/",
+  "iconUrl": "https://yourfinances.me/icons/YOURFINANCES-Logo-APP.png",
+  "splashScreenImageUrl": "https://yourfinances.me/icons/Your_Finances_Logo_Loading.png",
+  "shortcuts": [],
+  "maskableIconUrl": "https://yourfinances.me/icons/YOURFINANCES-Logo-APP.png",
+  "appId": "com.yourfinances.app",
+  "appVersionName": "1.2.0",
+  "appVersionCode": 1,
+  "generatorApp": "PWABuilder",
+  "webManifestUrl": "/manifest.json",
+  "permissions": [
+    "android.permission.READ_SMS",
+    "android.permission.RECEIVE_SMS",
+    "android.permission.POST_NOTIFICATIONS"
+  ]
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.yourfinances.app",
+      "sha256_cert_fingerprints": [
+        "FA:C7:0A:7D:7B:64:9C:23:D0:6B:43:08:95:67:3C:7F:16:32:04:47:6B:1B:5F:A7:24:26:99:93:47:11:47:04"
+      ]
+    }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.yourfinances.analytics",
+      "sha256_cert_fingerprints": [
+        "FA:C7:0A:7D:7B:64:9C:23:D0:6B:43:08:95:67:3C:7F:16:32:04:47:6B:1B:5F:A7:24:26:99:93:47:11:47:04"
+      ]
+    }
+  }
+]
