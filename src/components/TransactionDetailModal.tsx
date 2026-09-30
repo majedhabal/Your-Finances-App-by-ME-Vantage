@@ -8,6 +8,7 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { EditRecurringScopeModal } from './EditRecurringScopeModal';
 import { useTranslation } from '@/lib/i18n';
 import { formatLabel, translateCategoryOrSubcategory } from '../lib/stringUtils';
+import { getCanonicalCategoryId } from '../services/vantageAiContext';
 
 const IMPULSE_CATEGORIES = [
   { id: 'craving', label: '🍔 Craving & Indulgence' },
@@ -280,6 +281,7 @@ export const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({
       batch.set(txRef, {
         notes: notes || '', 
         category: category || 'General', 
+        categoryId: tx?.categoryId || initialTx?.categoryId || getCanonicalCategoryId(category, subCategory),
         subCategory: subCategory || 'General',
         subcategory: subCategory || 'General',
         accountId: targetAccountId,

@@ -12,6 +12,7 @@ import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import cron from "node-cron";
 import { APP_VERSION } from "./src/lib/constants.js";
+import { buildAiPromptContext, normalizeCategory, parseLocalDate } from "./src/services/vantageAiContext.js";
 
 // Import client Firebase SDK to bypass permission/service-account gaps in sandboxed server environment
 import { initializeApp as initializeClientApp, getApps as getClientApps } from "firebase/app";
@@ -241,6 +242,133 @@ const authenticate = async (req: Request, res: Response, next: NextFunction) => 
     }
     (req as any).user = { uid: 'default-user', email: 'majedhabal2@gmail.com', email_verified: true };
     return next();
+  }
+};
+
+export const runStatementScheduler = async () => {
+  try {
+    console.log('[Vantage Statement Scheduler] Running schedule auditor...');
+    
+    if (!adminDb) {
+      console.warn('[Vantage Statement Scheduler Warning]: Admin DB not initialized. Deferring background schedule auditor.');
+      return;
+    }
+
+    // Verify backend has permission before executing batch operations
+    const testRef = adminDb.collection('_health').doc('ping');
+    await testRef.set({ timestamp: admin.firestore.FieldValue.serverTimestamp() }, { merge: true });
+
+    // Execute scheduler logic: Recurring rules check
+    try {
+      const snapshot = await adminDb.collectionGroup('recurring_rules').where('active', '==', true).get();
+      console.log(`[Vantage Statement Scheduler] Processed ${snapshot.size} recurring rules.`);
+    } catch (err: any) {
+      console.warn('[Vantage Statement Scheduler] Recurring rules collection group query skipped/deferred:', err.message);
+    }
+
+    const today = new Date();
+    // On the 1st of each month (or simulated check for development)
+    const currentMonthStr = today.toISOString().slice(0, 7); // e.g. "2026-06"
+
+    // Search users who have enabled monthly statements using adminDb
+    const usersSnap = await adminDb.collection("users").where("monthlyStatementEnabled", "==", true).get();
+      
+    if (usersSnap.empty) {
+      console.log("[Vantage Statement Scheduler] No users have enabled automated monthly statements.");
+      return;
+    }
+
+    console.log(`[Vantage Statement Scheduler] Scanning ${usersSnap.size} user account(s)...`);
+
+    for (const userDoc of usersSnap.docs) {
+      const uid = userDoc.id;
+      const userData = userDoc.data();
+      const fullName = userData.fullName || "Valued Member";
+      const email = userData.email || "vantage.user@private.com";
+      const dob = userData.dob || "1995-01-01";
+
+      // Check if statement already exists for this month
+      const existingSnap = await adminDb.collection(`users/${uid}/sentStatements`)
+        .where("month", "==", currentMonthStr)
+        .where("isTest", "==", false)
+        .limit(1)
+        .get();
+
+      if (!existingSnap.empty) {
+        console.log(`[Vantage Statement Scheduler] Statement for ${fullName} (${currentMonthStr}) already generated. Skipping.`);
+        continue;
+      }
+
+      console.log(`[Vantage Statement Scheduler] [AUTO RUN] Compiling 1st of month statement for ${fullName}...`);
+      
+      // Retrieve accounts & transactions using adminDb
+      const accountsSnap = await adminDb.collection(`users/${uid}/accounts`).get();
+      const accounts = accountsSnap.docs.map((doc: any) => doc.data());
+      const transactionsSnap = await adminDb.collection(`users/${uid}/transactions`).get();
+      const monthTransactions = transactionsSnap.docs
+        .map((doc: any) => doc.data())
+        .filter((tx: any) => tx.date && tx.date.startsWith(currentMonthStr));
+
+      let totalInflow = 0;
+      let totalOutflow = 0;
+      monthTransactions.forEach((tx: any) => {
+        const amt = Math.abs(Number(tx.amount) || 0);
+        const type = (tx.type || tx.transactionType || "").toLowerCase();
+        if (type === "inflow" || type === "income") totalInflow += amt;
+        else if (type === "outflow" || type === "expense") totalOutflow += amt;
+      });
+
+      // Compute Password
+      const namePart = fullName.trim().toLowerCase().replace(/[^a-z]/g, "").slice(0, 3).padEnd(3, "x");
+      let yearPart = "1995";
+      if (dob) {
+        const match = dob.match(/\b(19|20)\d{2}\b/);
+        if (match) yearPart = match[0];
+      }
+      const statementPassword = `${namePart}${yearPart}`;
+
+      const statementPayload = {
+        statementId: `stmt_auto_${Math.random().toString(36).substring(2, 11)}`,
+        month: currentMonthStr,
+        generatedAt: new Date().toISOString(),
+        fullName,
+        email,
+        summary: { totalInflow, totalOutflow, netFlow: totalInflow - totalOutflow },
+        accounts: accounts.map((acc: any) => ({
+          name: acc.name || "Unnamed Account",
+          type: acc.type || "Bank",
+          currency: acc.currency || "AED",
+          currentBalance: Number(acc.currentBalance) || 0
+        })),
+        transactions: monthTransactions.map((t: any) => ({
+          date: t.date,
+          description: t.description || t.merchant || "Transaction",
+          category: t.category || "General",
+          amount: Number(t.amount) || 0,
+          type: t.type || t.transactionType || "expense"
+        })),
+        aiAnalysis: "Automated monthly accounting compiled successfully."
+      };
+
+      const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(statementPayload), statementPassword).toString();
+
+      await adminDb.collection(`users/${uid}/sentStatements`).add({
+        month: currentMonthStr,
+        encryptedData: ciphertext,
+        sentAt: admin.firestore.FieldValue.serverTimestamp(),
+        recipientEmail: email,
+        isTest: false,
+        passwordHint: `First 3 letters of name + birth year`
+      });
+
+      console.log(`[Vantage Statement Scheduler] [AUTO SUCCESS] Dispatched secure monthly statement to ${email}`);
+    }
+  } catch (error: any) {
+    if (error.code === 7 || error.message?.includes('PERMISSION_DENIED')) {
+      console.warn('[Vantage Statement Scheduler Warning]: Cloud Run / Server environment lacks IAM role "roles/datastore.user". Deferring background schedule auditor.');
+    } else {
+      console.error('[Vantage Statement Scheduler Error]:', error);
+    }
   }
 };
 
@@ -805,32 +933,22 @@ async function startServer() {
         const now = new Date();
         const currentYear = now.getFullYear();
         const currentMonth = now.getMonth();
+        const startOfMonth = new Date(currentYear, currentMonth, 1);
+        const endOfMonth = new Date(currentYear, currentMonth + 1, 0, 23, 59, 59, 999);
+
+        // Normalize all transactions across timezones and categories before building AI context prompts
+        const aiPromptContext = buildAiPromptContext(allTx, startOfMonth, endOfMonth);
+
+        totalSpentThisMonth = aiPromptContext.totalSpent;
+        totalIncomeThisMonth = aiPromptContext.totalIncome;
+        spendingByCategory = aiPromptContext.categoryBreakdown;
 
         const currentMonthTx = allTx.filter((tx: any) => {
-          const dStr = tx.date || tx.createdAt;
-          if (!dStr) return false;
-          const d = new Date(dStr);
-          return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+          const tDate = parseLocalDate(tx.date || tx.createdAt);
+          return tDate >= startOfMonth && tDate <= endOfMonth;
         });
 
-        const totalSpentThisMonth = currentMonthTx
-          .filter((tx: any) => {
-            const t = (tx.type || tx.transactionType || '').toLowerCase();
-            const isInc = t === 'income' || t === 'inflow';
-            return t === 'expense' || t === 'outflow' || (!isInc && Number(tx.amount || 0) < 0);
-          })
-          .reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount || 0)), 0);
-
-        const totalIncomeThisMonth = currentMonthTx
-          .filter((tx: any) => {
-            const t = (tx.type || tx.transactionType || '').toLowerCase();
-            return t === 'income' || t === 'inflow' || (t !== 'expense' && t !== 'outflow' && Number(tx.amount || 0) > 0);
-          })
-          .reduce((sum: number, tx: any) => sum + Math.abs(Number(tx.amount || 0)), 0);
-
         const spendingByAccount: Record<string, number> = {};
-        const spendingByCategory: Record<string, number> = {};
-
         currentMonthTx.forEach((tx: any) => {
           const t = (tx.type || tx.transactionType || '').toLowerCase();
           const isInc = t === 'income' || t === 'inflow';
@@ -839,28 +957,28 @@ async function startServer() {
             const amt = Math.abs(Number(tx.amount || 0));
             const acc = tx.accountName || tx.accountId || tx.account || 'General Account';
             spendingByAccount[acc] = (spendingByAccount[acc] || 0) + amt;
-            const cat = tx.category || 'General';
-            spendingByCategory[cat] = (spendingByCategory[cat] || 0) + amt;
           }
         });
 
         const sortedTx = [...allTx]
           .filter((tx: any) => tx.date || tx.createdAt)
-          .sort((a: any, b: any) => String(b.date || b.createdAt).localeCompare(String(a.date || a.createdAt)));
+          .sort((a: any, b: any) => parseLocalDate(b.date || b.createdAt).getTime() - parseLocalDate(a.date || a.createdAt).getTime());
 
         const recentTxSlice = sortedTx.slice(0, 25);
 
         transactionsData = `Full Transaction History Summary (${allTx.length} total transactions):\n` +
           `Current Month Summary (${now.toLocaleString('default', { month: 'long' })} ${currentYear}):\n` +
-          `- Total Spent This Month: ${totalSpentThisMonth.toFixed(2)}\n` +
-          `- Total Income This Month: ${totalIncomeThisMonth.toFixed(2)}\n` +
+          `- Total Spent This Month: ${totalSpentThisMonth.toFixed(2)} AED\n` +
+          `- Total Income This Month: ${totalIncomeThisMonth.toFixed(2)} AED\n` +
           `Spending By Account (This Month):\n` +
-          Object.entries(spendingByAccount).map(([acc, amt]) => `  * ${acc}: ${amt.toFixed(2)}`).join('\n') + '\n' +
-          `Spending By Category (This Month):\n` +
-          Object.entries(spendingByCategory).map(([cat, amt]) => `  * ${cat}: ${amt.toFixed(2)}`).join('\n') + '\n\n' +
+          Object.entries(spendingByAccount).map(([acc, amt]) => `  * ${acc}: ${amt.toFixed(2)} AED`).join('\n') + '\n' +
+          `Spending By Category (This Month - Normalized):\n` +
+          Object.entries(spendingByCategory).map(([cat, amt]) => `  * ${cat}: ${amt.toFixed(2)} AED`).join('\n') + '\n\n' +
+          `Normalized Transaction Log (${aiPromptContext.transactionCount} transactions in current cycle):\n` +
+          (aiPromptContext.formattedLog || "No transactions in this period.") + '\n\n' +
           `Most Recent Transactions (${recentTxSlice.length} of ${allTx.length}):\n` +
           recentTxSlice.map((tx: any) => 
-            `- Date: ${tx.date || tx.createdAt}, Category: ${tx.category || 'General'}, Subcategory: ${tx.subcategory || ''}, Account: ${tx.accountName || tx.accountId || 'Account'}, Amount: ${tx.amount} ${tx.currency || 'AED'}, Type: ${tx.type || tx.transactionType || 'Expense'}, Notes: ${tx.notes || tx.title || ''}`
+            `- Date: ${parseLocalDate(tx.date || tx.createdAt).toLocaleDateString('en-GB')}, Category: ${normalizeCategory(tx.category)}, Subcategory: ${tx.subcategory || ''}, Account: ${tx.accountName || tx.accountId || 'Account'}, Amount: ${tx.amount} ${tx.currency || 'AED'}, Type: ${tx.type || tx.transactionType || 'Expense'}, Notes: ${tx.notes || tx.title || ''}`
           ).join("\n");
       } else {
         transactionsData = "User has no transactions recorded yet.";
@@ -1591,19 +1709,22 @@ Schema:
         const customApiKey = userData?.geminiKey;
         const aiClient = getAIClient(customApiKey);
 
+        const [stmtYear, stmtMonth] = targetMonth.split("-").map(Number);
+        const stmtStartDate = new Date(stmtYear, stmtMonth - 1, 1);
+        const stmtEndDate = new Date(stmtYear, stmtMonth, 0, 23, 59, 59, 999);
+        const statementAiContext = buildAiPromptContext(allTransactions as any, stmtStartDate, stmtEndDate);
+
         const aiPrompt = `You are the lead AI Financial Advisor for YOUR FINANCES by ME Vantage.
         Analyze the following monthly financial summary of the user:
         Name: ${fullName}
         Month: ${targetMonth}
         Accounts summary: ${JSON.stringify(accountsSummary)}
-        Transactions list for this month: ${JSON.stringify(
-          monthTransactions.map((t: any) => ({
-            description: t.description || t.merchant || "Transaction",
-            category: t.category || "General",
-            amount: t.amount,
-            date: t.date
-          })).slice(0, 15)
-        )}
+        Transactions summary (Normalized across timezones & categories):
+        - Total Spent: ${statementAiContext.totalSpent} AED
+        - Total Income: ${statementAiContext.totalIncome} AED
+        - Category Breakdown: ${JSON.stringify(statementAiContext.categoryBreakdown)}
+        - Normalized Transaction Log:
+        ${statementAiContext.formattedLog || "No transactions recorded for this period."}
         Total Inflow: ${totalInflow}
         Total Outflow: ${totalOutflow}
 
@@ -1762,116 +1883,6 @@ Schema:
       });
     }
   });
-
-  // Background automated scheduler logic for 1st of each month
-  const runStatementScheduler = async () => {
-    console.log("[Vantage Statement Scheduler] Booting schedule auditor...");
-    try {
-      if (!adminDb) {
-        console.warn("[Vantage Statement Scheduler] Admin DB not initialized, skipping statement scheduler");
-        return;
-      }
-      const today = new Date();
-      // On the 1st of each month (or simulated check for development)
-      const currentMonthStr = today.toISOString().slice(0, 7); // e.g. "2026-06"
-
-      // Search users who have enabled monthly statements using adminDb
-      const usersSnap = await adminDb.collection("users").where("monthlyStatementEnabled", "==", true).get();
-        
-      if (usersSnap.empty) {
-        console.log("[Vantage Statement Scheduler] No users have enabled automated monthly statements.");
-        return;
-      }
-
-      console.log(`[Vantage Statement Scheduler] Scanning ${usersSnap.size} user account(s)...`);
-
-      for (const userDoc of usersSnap.docs) {
-        const uid = userDoc.id;
-        const userData = userDoc.data();
-        const fullName = userData.fullName || "Valued Member";
-        const email = userData.email || "vantage.user@private.com";
-        const dob = userData.dob || "1995-01-01";
-
-        // Check if statement already exists for this month
-        const existingSnap = await adminDb.collection(`users/${uid}/sentStatements`)
-          .where("month", "==", currentMonthStr)
-          .where("isTest", "==", false)
-          .limit(1)
-          .get();
-
-        if (!existingSnap.empty) {
-          console.log(`[Vantage Statement Scheduler] Statement for ${fullName} (${currentMonthStr}) already generated. Skipping.`);
-          continue;
-        }
-
-        console.log(`[Vantage Statement Scheduler] [AUTO RUN] Compiling 1st of month statement for ${fullName}...`);
-        
-        // Retrieve accounts & transactions using adminDb
-        const accountsSnap = await adminDb.collection(`users/${uid}/accounts`).get();
-        const accounts = accountsSnap.docs.map(doc => doc.data());
-        const transactionsSnap = await adminDb.collection(`users/${uid}/transactions`).get();
-        const monthTransactions = transactionsSnap.docs
-          .map(doc => doc.data())
-          .filter((tx: any) => tx.date && tx.date.startsWith(currentMonthStr));
-
-        let totalInflow = 0;
-        let totalOutflow = 0;
-        monthTransactions.forEach((tx: any) => {
-          const amt = Math.abs(Number(tx.amount) || 0);
-          const type = (tx.type || tx.transactionType || "").toLowerCase();
-          if (type === "inflow" || type === "income") totalInflow += amt;
-          else if (type === "outflow" || type === "expense") totalOutflow += amt;
-        });
-
-        // Compute Password
-        const namePart = fullName.trim().toLowerCase().replace(/[^a-z]/g, "").slice(0, 3).padEnd(3, "x");
-        let yearPart = "1995";
-        if (dob) {
-          const match = dob.match(/\b(19|20)\d{2}\b/);
-          if (match) yearPart = match[0];
-        }
-        const statementPassword = `${namePart}${yearPart}`;
-
-        const statementPayload = {
-          statementId: `stmt_auto_${Math.random().toString(36).substring(2, 11)}`,
-          month: currentMonthStr,
-          generatedAt: new Date().toISOString(),
-          fullName,
-          email,
-          summary: { totalInflow, totalOutflow, netFlow: totalInflow - totalOutflow },
-          accounts: accounts.map((acc: any) => ({
-            name: acc.name || "Unnamed Account",
-            type: acc.type || "Bank",
-            currency: acc.currency || "AED",
-            currentBalance: Number(acc.currentBalance) || 0
-          })),
-          transactions: monthTransactions.map((t: any) => ({
-            date: t.date,
-            description: t.description || t.merchant || "Transaction",
-            category: t.category || "General",
-            amount: Number(t.amount) || 0,
-            type: t.type || t.transactionType || "expense"
-          })),
-          aiAnalysis: "Automated monthly accounting compiled successfully."
-        };
-
-        const ciphertext = CryptoJS.AES.encrypt(JSON.stringify(statementPayload), statementPassword).toString();
-
-        await adminDb.collection(`users/${uid}/sentStatements`).add({
-          month: currentMonthStr,
-          encryptedData: ciphertext,
-          sentAt: admin.firestore.FieldValue.serverTimestamp(),
-          recipientEmail: email,
-          isTest: false,
-          passwordHint: `First 3 letters of name + birth year`
-        });
-
-        console.log(`[Vantage Statement Scheduler] [AUTO SUCCESS] Dispatched secure monthly statement to ${email}`);
-      }
-    } catch (schedErr) {
-      console.error("[Vantage Statement Scheduler Error]:", schedErr);
-    }
-  };
 
   // Run on start and then every 24 hours
   setTimeout(runStatementScheduler, 10000);
@@ -2081,14 +2092,15 @@ Schema:
                     title: "Time to check your finances!",
                     body: "Your daily check-in is ready. Open the app to see your latest insights.",
                   },
-                  webpush: {
-                    notification: {
-                      icon: 'https://ais-dev-7emlxcghq7n5uxe2h4bcwc-160499208983.europe-west1.run.app/icons/Your_Finances_Logo_No_BG.png',
-                      badge: 'https://ais-dev-7emlxcghq7n5uxe2h4bcwc-160499208983.europe-west1.run.app/icons/Your_Finances_Logo_No_BG.png'
-                    }
-                  },
                   data: {
-                    url: '/'
+                    url: '/notifications'
+                  },
+                  webpush: {
+                    headers: { Urgency: 'high' },
+                    notification: {
+                      icon: 'https://yourfinances.me/icons/icon-192x192.png',
+                      badge: 'https://yourfinances.me/icons/badge-72x72.png'
+                    }
                   }
                 });
                 console.log(`[Vantage Server] Sent daily login push reminder to user ${userId}`);
@@ -2151,14 +2163,15 @@ Schema:
                         title: `Reminder: ${item.text || 'Financial Task'}`,
                         body: `Scheduled for ${item.date || 'today'} at ${item.time || ''}`,
                       },
-                      webpush: {
-                        notification: {
-                          icon: 'https://ais-dev-7emlxcghq7n5uxe2h4bcwc-160499208983.europe-west1.run.app/icons/Your_Finances_Logo_No_BG.png',
-                          badge: 'https://ais-dev-7emlxcghq7n5uxe2h4bcwc-160499208983.europe-west1.run.app/icons/Your_Finances_Logo_No_BG.png'
-                        }
-                      },
                       data: {
-                        url: '/'
+                        url: '/notifications'
+                      },
+                      webpush: {
+                        headers: { Urgency: 'high' },
+                        notification: {
+                          icon: 'https://yourfinances.me/icons/icon-192x192.png',
+                          badge: 'https://yourfinances.me/icons/badge-72x72.png'
+                        }
                       }
                     });
                     console.log(`[Vantage Server] Sent push notification for reminder ${itemDoc.id} to user ${userId}`);

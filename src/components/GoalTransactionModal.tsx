@@ -7,6 +7,7 @@ import { evaluateMathExpression } from '../lib/constants';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 import { useTranslation } from '@/lib/i18n';
 import { DEFAULT_RATES } from '../lib/exchangeRates';
+import { getCanonicalCategoryId } from '../services/vantageAiContext';
 
 const getRateToAED = (curr: string) => {
   const c = curr || 'AED';
@@ -102,6 +103,7 @@ export const GoalTransactionModal: React.FC<{
             type: 'Outflow',
             transactionType: 'transfer',
             category: 'Transfer',
+            categoryId: 'transfer',
             subcategory: 'Internal Transfer',
             notes: note || t('goal_transaction_modal.deposit_transfer', 'Transfer deposit: ') + target.name,
             date: today,
@@ -121,6 +123,7 @@ export const GoalTransactionModal: React.FC<{
             type: 'Inflow',
             transactionType: 'transfer',
             category: 'Transfer',
+            categoryId: 'transfer',
             subcategory: 'Internal Transfer',
             notes: note || t('goal_transaction_modal.deposit_transfer', 'Transfer deposit: ') + target.name,
             date: today,
@@ -149,6 +152,7 @@ export const GoalTransactionModal: React.FC<{
             type: 'Inflow',
             transactionType: 'income',
             category: type === 'milestone' ? 'Investments' : 'Financial Expenses',
+            categoryId: getCanonicalCategoryId(type === 'milestone' ? 'Investments' : 'Financial Expenses', type === 'milestone' ? 'Savings' : target.name),
             subcategory: type === 'milestone' ? 'Savings' : target.name,
             notes: note || t('goal_transaction_modal.deposit_income', 'Income deposit: ') + target.name,
             date: today,

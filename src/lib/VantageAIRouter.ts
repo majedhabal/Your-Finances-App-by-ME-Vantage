@@ -2,6 +2,7 @@ import { auth, db, getCurrentUser } from "./firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { logAIUsage } from "./aiUsageTracker";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { buildAiPromptContext } from "../services/vantageAiContext";
 
 export const MODEL_LITE = 'gemini-3.6-flash';
 export const MODEL_FLASH = 'gemini-3.6-flash';
@@ -59,9 +60,19 @@ const formatClientAccountsForPrompt = (accounts?: any[], accountBalances?: Recor
     }).join("\n\n") + "\n\n";
   }
   if (transactions && Array.isArray(transactions) && transactions.length > 0) {
-    context += `Recent Transactions (${transactions.length} total):\n` + transactions.slice(0, 25).map((tx: any) => 
-      `- Date: ${tx.date || tx.createdAt}, Category: ${tx.category || 'General'}, Account: ${tx.accountName || tx.accountId || 'Account'}, Amount: ${tx.amount} ${tx.currency || 'AED'}, Type: ${tx.type || tx.transactionType || 'Expense'}, Notes: ${tx.notes || tx.title || ''}`
-    ).join("\n") + "\n\n";
+    const startDate = new Date();
+    startDate.setFullYear(startDate.getFullYear() - 1);
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 1);
+
+    const promptContext = buildAiPromptContext(transactions, startDate, endDate);
+    context += `Recent Transactions (${transactions.length} total, normalized across timezones & categories):\n` +
+      `- Total Spent: ${promptContext.totalSpent.toFixed(2)} AED\n` +
+      `- Total Income: ${promptContext.totalIncome.toFixed(2)} AED\n` +
+      `- Spending Breakdown By Category:\n` +
+      Object.entries(promptContext.categoryBreakdown).map(([c, amt]) => `  * ${c}: ${amt.toFixed(2)} AED`).join('\n') + '\n\n' +
+      `- Normalized Transaction Log:\n` +
+      (promptContext.formattedLog.split('\n').slice(0, 25).join('\n') || 'No transactions in date range') + "\n\n";
   }
   return context;
 };

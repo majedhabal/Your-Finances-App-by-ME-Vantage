@@ -3,7 +3,7 @@ import { useTranslation } from '@/lib/i18n';
 import { motion, AnimatePresence } from 'motion/react';
 import { RefreshCw, Trash2, Calendar, Clock, ChevronLeft, Landmark, AlertCircle, ToggleLeft as Toggle, ToggleRight, Edit2, X, Check, ChevronDown, Filter, Tag, ShieldCheck, ArrowUpRight, ArrowDownLeft, ArrowRightLeft } from 'lucide-react';
 import { collection, query, onSnapshot, doc, deleteDoc, updateDoc, serverTimestamp, getDocs, where, writeBatch, increment } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 import { ConfirmationModal } from './ConfirmationModal';
 import { EditRecurringScopeModal } from './EditRecurringScopeModal';
@@ -152,10 +152,12 @@ export const RecurringTransactionsView: React.FC<RecurringTransactionsViewProps>
     }
   };
 
-  useEffect(() => {
-    if (!uid) return;
+useEffect(() => {
+    // 🛡️ CRITICAL GUARD: Abort if Firebase Auth is not active
+    if (!uid || !auth.currentUser) return;
+    const userId = auth.currentUser.uid;
 
-    const q = query(collection(db, `users/${uid}/recurringTransactions`));
+    const q = query(collection(db, `users/${userId}/recurringTransactions`));
     const unsub = onSnapshot(q, (snap) => {
       setRecurring(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as RecurringTransaction)));
       setLoading(false);
@@ -163,7 +165,7 @@ export const RecurringTransactionsView: React.FC<RecurringTransactionsViewProps>
 
     return () => unsub();
   }, [uid]);
-
+  
   const handleDelete = async (id: string) => {
     setItemToDelete(id);
   };

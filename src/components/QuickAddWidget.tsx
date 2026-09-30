@@ -6,6 +6,7 @@ import { collection, doc, query, onSnapshot, setDoc, deleteDoc, runTransaction, 
 import { Plus, Trash2, Smartphone, HelpCircle, Check, Sparkles, Sliders, ChevronDown, ChevronUp, AlertCircle, Info, Landmark, Wallet, PlusCircle } from 'lucide-react';
 import { triggerHaptic, hapticPresets } from '../lib/haptics';
 import { HybridWidgetSimulator } from './HybridWidgetSimulator';
+import { getCanonicalCategoryId } from '../services/vantageAiContext';
 
 interface QuickAddWidgetProps {
   uid: string;
@@ -327,6 +328,7 @@ export const QuickAddWidget: React.FC<QuickAddWidgetProps> = ({ uid }) => {
           status: 'confirmed',
           accountId: widget.accountId,
           category: budget.category,
+          categoryId: getCanonicalCategoryId(budget.category, budget.subcategory),
           subcategory: budget.subcategory || null,
           notes: `Android Widget: ${widget.name}`,
           date: new Date().toISOString().split('T')[0],

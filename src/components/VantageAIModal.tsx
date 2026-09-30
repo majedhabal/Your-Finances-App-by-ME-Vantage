@@ -7,6 +7,7 @@ import { useTranslation } from '@/lib/i18n';
 import { doc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { getEffectiveAiTokens } from '../lib/tokenConsumption';
+import { buildAiPromptContext } from '../services/vantageAiContext';
 
 interface VantageAIModalProps {
   isOpen: boolean;
@@ -111,16 +112,10 @@ export const VantageAIModal: React.FC<VantageAIModalProps> = ({ isOpen, onClose,
       // Filter last 30 days for context
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
       
-      const recentTxs = transactions
-        .filter(tx => new Date(tx.date) >= thirtyDaysAgo)
-        .map(tx => ({
-          date: new Date(tx.date).toLocaleDateString(),
-          amount: tx.amount,
-          type: tx.type,
-          category: tx.category,
-          account: accounts.find(a => a.id === tx.accountId)?.name || 'Unknown'
-        }));
+      const aiPromptContext = buildAiPromptContext(transactions, thirtyDaysAgo, tomorrow);
 
       const balancesContext = accounts.map(acc => ({
         name: acc.name,
@@ -155,7 +150,10 @@ export const VantageAIModal: React.FC<VantageAIModalProps> = ({ isOpen, onClose,
       const context = `
         Financial Data Context (Last 30 Days):
         - Active Account Balances: ${balancesContext.map(b => `${b.name}: ${b.balance}`).join(', ')}
-        - Recent Transaction History: ${recentTxs.map(t => `${t.date} | ${t.category}: ${t.amount} (${t.account})`).join('; ')}
+        - Spending Breakdown (Normalized): Total Spent: ${aiPromptContext.totalSpent.toFixed(2)} AED, Total Income: ${aiPromptContext.totalIncome.toFixed(2)} AED
+        - Category Breakdown: ${JSON.stringify(aiPromptContext.categoryBreakdown)}
+        - Recent Transaction History (${aiPromptContext.transactionCount} entries normalized across timezones & categories):
+        ${aiPromptContext.formattedLog || "No transactions recorded in the last 30 days."}
         
         ${lifeProfile}
         

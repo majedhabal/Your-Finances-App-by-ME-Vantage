@@ -9,6 +9,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { getEffectiveAiTokens } from '../lib/tokenConsumption';
 import { PremiumMarketingCard } from './PremiumMarketingCard';
 import { AdContainer } from './AdContainer';
+import { buildAiPromptContext } from '../services/vantageAiContext';
 
 interface AIInsightsProps {
   profile: any;
@@ -42,10 +43,20 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
     setForecastLoading(true);
     try {
       const context = await getFinancialContext();
-      const txContext = context.transactions.map(t => `${t.date} | ${t.category}: ${t.amount} (${t.notes || 'No notes'})`).join('; ');
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const aiContext = buildAiPromptContext(context.transactions, sixMonthsAgo, tomorrow);
+      const txContext = aiContext.formattedLog || context.transactions.map((t: any) => `${t.date} | ${t.category}: ${t.amount} (${t.notes || 'No notes'})`).join('; ');
       const prompt = `You are Vantage AI. Perform a DEEP FINANCIAL FORECAST for the next 6 months based on:
          Balance: $${context.balance}
-         Recent Transactions: ${txContext}
+         Recent Transactions (Normalized across timezones & categories):
+         ${txContext}
+         Category Totals: ${JSON.stringify(aiContext.categoryBreakdown)}
+         Total Spent: ${aiContext.totalSpent} AED
+         Total Income: ${aiContext.totalIncome} AED
          Predict trajectory and suggest 3 pivot points for wealth maximization. Concisely.
          CRITICAL RULE: You must NEVER give direct recommendations or tips. You must ALWAYS phrase any advice, suggestions, or insights as "Based on research...", "Online sources suggest...", or "According to financial research...". Never state recommendations or tips directly.`;
       

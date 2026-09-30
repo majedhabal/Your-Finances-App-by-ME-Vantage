@@ -11,12 +11,13 @@ import {
 import { 
   collection, query, where, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, writeBatch, getDocs, getDoc, increment, runTransaction, setDoc
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 import { getCurrentPeriodYearMonth, autoRolloverSalaryBreakdowns } from '../lib/salaryBreakdownUtils';
 import { SalaryBreakdownVerificationModal } from './SalaryBreakdownVerificationModal';
 import { ShoppingList } from './ShoppingList';
 import { ConfirmRecurringTransactionModal } from './ConfirmRecurringTransactionModal';
+import { processRecurringTransactions, handleApprovalAction } from '../services/recurringService';
 
 interface NotificationDispatchHubProps {
   uid: string;
@@ -154,6 +155,7 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
   
   // Real-time Firestore streams
   const [drafts, setDrafts] = useState<any[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
   const [allTransactions, setAllTransactions] = useState<any[]>([]);
   const [miniBudgets, setMiniBudgets] = useState<any[]>([]);
   const [milestones, setMilestones] = useState<any[]>([]);
@@ -206,10 +208,13 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
     }
   };
 
-  useEffect(() => {
-    if (!uid) return;
+ useEffect(() => {
+    // 🛡️ CRITICAL GUARD: Abort if Firebase Auth is not active
+    if (!uid || !auth.currentUser) return;
+    const userId = auth.currentUser.uid;
+
     const q = query(
-      collection(db, `users/${uid}/recurringTransactions`)
+      collection(db, `users/${userId}/recurringTransactions`)
     );
     const unsub = onSnapshot(q, (snap) => {
       const items = snap.docs
@@ -426,6 +431,10 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
 
   useEffect(() => {
     if (!uid) return;
+    processRecurringTransactions(uid).catch(err => {
+      console.warn("Automated recurring processing:", err);
+    });
+
     const qAllRec = query(
       collection(db, `users/${uid}/recurringTransactions`),
       where('isActive', '!=', false)
@@ -755,6 +764,32 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
       console.warn("Dispatched approvals offline fallback:", err);
     });
 
+    // 1a. Listen to Dedicated pending_approvals collection
+    const qPendingApprovals = query(
+      collection(db, `users/${uid}/pending_approvals`),
+      where('status', '==', 'pending')
+    );
+    const unsubPendingApprovals = onSnapshot(qPendingApprovals, (snap) => {
+      setPendingApprovals(snap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          isPendingApprovalCol: true,
+          notes: data.name,
+          amount: Number(data.amount || 0),
+          category: data.category,
+          date: data.dueDate,
+          ruleId: data.ruleId,
+          status: data.status,
+          type: data.category === 'Income' ? 'income' : 'expense',
+          accountId: data.sourceAccountId || (accounts && accounts[0]?.id) || '',
+          ...data
+        };
+      }));
+    }, (err) => {
+      console.warn("Dispatched pending approvals error:", err);
+    });
+
     // 1b. Listen to All Transactions
     const unsubAllTxs = onSnapshot(collection(db, `users/${uid}/transactions`), (snap) => {
       setAllTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -877,6 +912,7 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
 
     return () => {
       unsubDrafts();
+      unsubPendingApprovals();
       unsubAllTxs();
       unsubBudgets();
       unsubGoals();
@@ -1139,6 +1175,59 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
     console.log("🟢 [DEBUG] Current uid:", uid, "accounts count:", accounts?.length);
     setIsProcessing(tx.id || 'draft');
     try {
+      if (tx.isPendingApprovalCol) {
+        // 1. Dedicated pending_approvals: Execute transactional handleApprovalAction
+        await handleApprovalAction(uid, tx.id, 'confirm');
+
+        // 2. Atomically update target account balance and miniBudgets
+        const targetAccId = tx.accountId || tx.sourceAccountId || (accounts && accounts.length > 0 ? accounts[0].id : '');
+        const amt = Number(tx.amount || 0);
+        const txType = (tx.type || '').toLowerCase();
+        const isIncome = txType === 'income' || txType === 'inflow';
+        const amountChange = isIncome ? amt : -amt;
+
+        const batch = writeBatch(db);
+        let hasBatchWrites = false;
+
+        if (targetAccId) {
+          const accRef = doc(db, `users/${uid}/accounts`, targetAccId);
+          const accSnap = await getDoc(accRef);
+          if (accSnap.exists()) {
+            batch.update(accRef, {
+              currentBalance: increment(amountChange),
+              updatedAt: serverTimestamp()
+            });
+            hasBatchWrites = true;
+          }
+        }
+
+        if (!isIncome && tx.category) {
+          const queryBudgets = query(
+            collection(db, `users/${uid}/miniBudgets`),
+            where('userId', '==', uid)
+          );
+          const querySnap = await getDocs(queryBudgets);
+          const matchingBudgetDoc = querySnap.docs.find(docSnap => {
+            const data = docSnap.data();
+            return data.categoryTitle === tx.category || data.category === tx.category;
+          });
+          if (matchingBudgetDoc) {
+            const budgetRef = doc(db, `users/${uid}/miniBudgets`, matchingBudgetDoc.id);
+            batch.update(budgetRef, {
+              spentAmount: increment(amt),
+              updatedAt: serverTimestamp()
+            });
+            hasBatchWrites = true;
+          }
+        }
+
+        if (hasBatchWrites) {
+          await batch.commit();
+        }
+        onTransactionApproved?.();
+        return;
+      }
+
       const batch = writeBatch(db);
 
       // 1. Update transaction status to confirmed
@@ -1225,10 +1314,14 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
       onConfirm: async () => {
         setIsProcessing(tx.id);
         try {
-          const txRef = doc(db, `users/${uid}/transactions`, tx.id);
-          await deleteDoc(txRef);
+          if (tx.isPendingApprovalCol) {
+            await handleApprovalAction(uid, tx.id, 'reject');
+          } else {
+            const txRef = doc(db, `users/${uid}/transactions`, tx.id);
+            await deleteDoc(txRef);
+          }
         } catch (err) {
-          handleFirestoreError(err, OperationType.DELETE, `users/${uid}/transactions/${tx.id}`);
+          handleFirestoreError(err, OperationType.DELETE, `users/${uid}/pending_approvals/${tx.id}`);
         } finally {
           setIsProcessing(null);
         }
@@ -1605,9 +1698,10 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
 
     const seen = new Set<string>();
     const unique: any[] = [];
-    for (const tx of unconfirmedForMonth) {
-      const recKey = tx.recurringId 
-        ? `${tx.recurringId}_${tx.date ? tx.date.substring(0, 7) : tx.date}` 
+    const combined = [...pendingApprovals, ...unconfirmedForMonth];
+    for (const tx of combined) {
+      const recKey = tx.ruleId || tx.recurringId 
+        ? `${tx.ruleId || tx.recurringId}_${tx.date ? tx.date.substring(0, 7) : tx.date}` 
         : `${(tx.notes || tx.category || '').replace('(Recurring)', '').trim()}_${tx.amount}_${tx.date ? tx.date.substring(0, 7) : tx.date}`;
       if (!seen.has(recKey)) {
         seen.add(recKey);
@@ -1615,7 +1709,7 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
       }
     }
     return unique;
-  }, [drafts, allTransactions]);
+  }, [drafts, pendingApprovals, allTransactions]);
 
   // Alert/notify the user about newly matured transactions requiring confirmation
   useEffect(() => {

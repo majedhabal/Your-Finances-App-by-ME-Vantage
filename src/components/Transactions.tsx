@@ -3,7 +3,7 @@ import { useTranslation } from '@/lib/i18n';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Filter, ArrowUpRight, ArrowDownLeft, FileDown, RefreshCw, ChevronRight, Plus, Mic, GitBranch, CalendarClock, ShoppingCart, Car, Activity, Tag, Sparkles, Bot, X, Lock, Info, MessageSquare } from 'lucide-react';
 import { collection, query, orderBy, onSnapshot, getDocs } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import i18nextInstance from '../lib/i18n';
 import { TransactionDetailModal } from './TransactionDetailModal';
 import { AddTransactionModal } from './AddTransactionModal';
@@ -172,10 +172,12 @@ export const Transactions: React.FC<TransactionsProps> = ({
     return () => window.removeEventListener('switch-tab', handleSwitchTab);
   }, []);
 
-  useEffect(() => {
-    if (!uid) return;
+useEffect(() => {
+    // 🛡️ CRITICAL GUARD: Abort if Firebase Auth is not active
+    if (!uid || !auth.currentUser) return;
     setLoading(true);
-    const txQuery = query(collection(db, 'users', uid, 'transactions'), orderBy('date', 'desc'));
+    const userId = auth.currentUser.uid;
+    const txQuery = query(collection(db, 'users', userId, 'transactions'), orderBy('date', 'desc'));
     const recQuery = query(collection(db, 'users', uid, 'recurringTransactions'));
     const catQuery = query(collection(db, `users/${uid}/custom_categories`));
     

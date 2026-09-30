@@ -1138,6 +1138,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ uid, profile, on
             type: isExpense ? 'expense' : 'income',
             amount: Math.abs(originalStartingBalance),
             category: 'Others',
+            categoryId: 'others',
             subcategory: 'Starting Balance',
             classification: 'starting_balance',
             notes: 'Starting Balance',

@@ -29,6 +29,9 @@ export default defineConfig(({ mode }) => {
       hmr: {
         overlay: true
       },
+      watch: {
+        ignored: ['**/dist/**', '**/node_modules/**']
+      }
     },
     build: {
       outDir: 'dist',

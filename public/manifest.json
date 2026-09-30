@@ -1,17 +1,17 @@
 {
-  "name": "Your Finances by ME Vantage",
-  "short_name": "Your Finances",
+  "name": "YOUR FINANCES",
+  "short_name": "Finances",
   "description": "A streamlined financial platform designed to simplify money management and bring absolute clarity to your daily life.",
   "start_url": "/",
+  "id": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
-  "background_color": "#111C2D",
-  "theme_color": "#111C2D",
+  "background_color": "#0d1117",
+  "theme_color": "#1f6feb",
   "version": "1.2.0",
   "orientation": "portrait",
   "categories": ["finance", "productivity"],
-  "id": "com.yourfinances.app",
   "permissions": [
     "notifications",
     "push"
@@ -91,13 +91,7 @@
       "purpose": "any"
     },
     {
-      "src": "/icons/YOURFINANCES-Logo-APP.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icons/YOURFINANCES-Logo-APP.png",
+      "src": "/icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

@@ -1,25 +1,24 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
   GoogleAuthProvider, 
   setPersistence, 
   browserLocalPersistence, 
-  indexedDBLocalPersistence, 
-  inMemoryPersistence 
+  indexedDBLocalPersistence 
 } from 'firebase/auth';
 import { 
   initializeFirestore, 
   getFirestore,
   persistentLocalCache,
-  persistentMultipleTabManager,
-  memoryLocalCache
+  persistentMultipleTabManager
 } from 'firebase/firestore';
 import { getMessaging } from 'firebase/messaging';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = initializeApp(firebaseConfig);
+// Singleton App Initialization
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-// Configure Firestore with persistent multi-tab disk cache
+// Configure Firestore with persistent multi-tab disk cache safely
 let firestoreInstance: any;
 try {
   firestoreInstance = initializeFirestore(
@@ -32,72 +31,44 @@ try {
     (firebaseConfig as any).firestoreDatabaseId
   );
 } catch (err) {
-  try {
-    firestoreInstance = initializeFirestore(
-      app,
-      { localCache: persistentLocalCache({}) },
-      (firebaseConfig as any).firestoreDatabaseId
-    );
-  } catch (err2) {
-    console.warn("Persistent cache fallback to standard getFirestore:", err2);
-    firestoreInstance = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
-  }
+  firestoreInstance = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 }
 
 export const db = firestoreInstance;
 export const auth = getAuth(app);
 
+// Configure Local Persistence
+if (typeof window !== 'undefined') {
+  setPersistence(auth, indexedDBLocalPersistence).catch(() => {
+    setPersistence(auth, browserLocalPersistence).catch((err) => {
+      console.warn('[Vantage Firebase] Persistence configuration warning:', err);
+    });
+  });
+}
+
 export async function getCurrentUser(): Promise<any> {
   if (auth.currentUser) return auth.currentUser;
-  const user = await new Promise((resolve) => {
-    let resolved = false;
+  
+  return new Promise((resolve) => {
     const unsubscribe = auth.onAuthStateChanged((u) => {
-      if (!resolved) {
-        resolved = true;
-        unsubscribe();
-        resolve(u);
-      }
+      unsubscribe();
+      resolve(u);
     });
     setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        unsubscribe();
-        resolve(auth.currentUser);
-      }
-    }, 1500);
+      unsubscribe();
+      resolve(auth.currentUser);
+    }, 2000);
   });
-
-  if (user) return user;
-
-  return {
-    uid: 'default-user',
-    email: 'majedhabal2@gmail.com',
-    emailVerified: true,
-    isAnonymous: false,
-    getIdToken: async () => 'mock-dev-token-vantage',
-    reload: async () => {}
-  };
 }
 
 export let messaging: any = null;
 try {
-  messaging = getMessaging(app);
-} catch (err) {
-  console.warn("Firebase Messaging is not supported in this browser/device environment:", err);
-}
-
-// Ensure browser-based local auth persistence
-(async () => {
-  try {
-    await setPersistence(auth, browserLocalPersistence);
-  } catch (err) {
-    try {
-      await setPersistence(auth, indexedDBLocalPersistence);
-    } catch (err2) {
-      await setPersistence(auth, inMemoryPersistence);
-    }
+  if (typeof window !== 'undefined') {
+    messaging = getMessaging(app);
   }
-})();
+} catch (err) {
+  console.warn('[Vantage Firebase] Messaging unavailable in this environment:', err);
+}
 
 let googleProvider: GoogleAuthProvider | null = null;
 export const getGoogleProvider = () => {
@@ -108,5 +79,3 @@ export const getGoogleProvider = () => {
   }
   return googleProvider;
 };
-
-

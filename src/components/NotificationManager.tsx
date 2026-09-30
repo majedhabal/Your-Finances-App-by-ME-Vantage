@@ -1,12 +1,14 @@
 import { useEffect } from 'react';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { collection, onSnapshot, query, where, updateDoc, doc } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
 import { messaging } from '../lib/firebase';
 
 export const NotificationManager = ({ uid }: { uid: string }) => {
   useEffect(() => {
-    if (!uid) return;
+    // 🛡️ CRITICAL GUARD: Abort if Firebase Auth is not active
+    if (!uid || !auth.currentUser) return;
+    const userId = auth.currentUser.uid;
 
     const requestPermission = async () => {
       try {
@@ -14,9 +16,13 @@ export const NotificationManager = ({ uid }: { uid: string }) => {
         if (permission === 'granted') {
           console.log('Notification permission granted.');
           try {
-            const token = await getToken(messaging);
+            let swRegistration: ServiceWorkerRegistration | undefined;
+            if ('serviceWorker' in navigator) {
+              swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+            }
+            const token = await getToken(messaging, swRegistration ? { serviceWorkerRegistration: swRegistration } : undefined);
             if (token) {
-              await updateDoc(doc(db, `users/${uid}`), {
+              await updateDoc(doc(db, `users/${userId}`), {
                 fcmToken: token
               });
               console.log('FCM token stored.');

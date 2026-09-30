@@ -24,41 +24,33 @@ export const Budgets: React.FC<BudgetsProps> = ({ profile }) => {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const lastReorderTimeRef = useRef<number>(0);
 
+// WITH THIS:**
   useEffect(() => {
-    if (!profile?.uid) return;
+    // 🛡️️ CRITICAL GUARD: Wait for Firebase Auth session
+    if (!profile?.uid || !auth.currentUser) return;
     setLoading(true);
 
-    const bQuery = query(collection(db, 'users', profile.uid, 'miniBudgets'));
+    const userId = auth.currentUser.uid;
+    const bQuery = query(collection(db, 'users', userId, 'miniBudgets'));
     const unsubscribeBudgets = onSnapshot(bQuery, (snapshot) => {
       const list: any[] = [];
       snapshot.forEach(doc => {
         list.push({ id: doc.id, ...doc.data() });
       });
 
-      if (Date.now() - lastReorderTimeRef.current < 2000 && envelopes.length === list.length) {
-        const idMap = new Map(list.map(item => [item.id, item]));
-        const merged = envelopes.map(env => idMap.get(env.id) || env);
-        list.forEach(item => {
-          if (!merged.some(m => m.id === item.id)) {
-            merged.push(item);
-          }
-        });
-        setEnvelopes(merged);
-      } else {
-        list.sort((a, b) => {
-          const orderA = typeof a.order === 'number' ? a.order : 999;
-          const orderB = typeof b.order === 'number' ? b.order : 999;
-          return orderA - orderB;
-        });
-        setEnvelopes(list);
-      }
+      list.sort((a, b) => {
+        const orderA = typeof a.order === 'number' ? a.order : 999;
+        const orderB = typeof b.order === 'number' ? b.order : 999;
+        return orderA - orderB;
+      });
+      setEnvelopes(list);
       setLoading(false);
     }, (err) => {
-      console.error("Failed synchronization pipeline inside budget sheets:", err);
+      console.warn("[Budgets] Stream paused:", err.message);
       setLoading(false);
     });
 
-    const txQuery = query(collection(db, 'users', profile.uid, 'transactions'));
+    const txQuery = query(collection(db, 'users', userId, 'transactions'));
     const unsubscribeTx = onSnapshot(txQuery, (snapshot) => {
       const txs: any[] = [];
       snapshot.forEach(doc => {
@@ -66,14 +58,14 @@ export const Budgets: React.FC<BudgetsProps> = ({ profile }) => {
       });
       setTransactions(txs);
     }, (err) => {
-      console.error("Failed synchronization pipeline for transactions:", err);
+      console.warn("[Budgets Transactions] Stream paused:", err.message);
     });
 
     return () => {
       unsubscribeBudgets();
       unsubscribeTx();
     };
-  }, [profile]);
+  }, [profile?.uid]);
 
   const saveNewOrder = async (reordered: any[]) => {
     lastReorderTimeRef.current = Date.now();

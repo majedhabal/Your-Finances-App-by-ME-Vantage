@@ -1,49 +1,31 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isAuthenticated() {
-      return request.auth != null;
-    }
 
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return request.auth != null && request.auth.uid == userId;
     }
 
-    // User profile and subcollections strictly isolated to document owner
     match /users/{userId} {
       allow read, write: if isOwner(userId);
 
-      match /{collection}/{document=**} {
+      // Match all nested collections (miniBudgets, logins, goals, accounts, etc.)
+      match /{subcollection=**} {
         allow read, write: if isOwner(userId);
+      }
+
+      // Explicit validation for ledger transactions
+      match /transactions/{transactionId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.amount is number
+          && request.resource.data.date is string;
+        allow delete: if isOwner(userId);
       }
     }
 
-    // Collaborative shared carts: read/write with item-level constraints, delete restricted to creator
-    match /sharedCarts/{cartId} {
-      allow read: if true;
-      allow create: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if isAuthenticated();
-      allow delete: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
-    }
-
-    // Global exchange rates & configs: public read, strictly server/admin write
-    match /global_config/{document} {
-      allow read: if isAuthenticated();
-      allow write: if false; // Mutated only via Firebase Admin SDK / Cloud Functions
-    }
-
-    match /global_configurations/{document=**} {
-      allow read: if isAuthenticated();
-      allow write: if false;
-    }
-
-    match /adminMetrics/{metricId} {
-      allow read, write: if request.auth.token.admin == true;
-    }
-
-    match /broadcast_notifications/{notificationId} {
-      allow read: if isAuthenticated();
-      allow write: if request.auth.token.admin == true;
+    match /_health/{docId} {
+      allow read, write: if request.auth != null;
     }
   }
 }

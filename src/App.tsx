@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { signOut, setPersistence, browserLocalPersistence, onAuthStateChanged, User } from 'firebase/auth';
 import { doc, onSnapshot, collection, updateDoc, getDoc, getDocs, setDoc } from 'firebase/firestore';
 import { auth, db } from './lib/firebase';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { secureSave, secureLoad } from './lib/secureStorage';
 import { Layout } from './components/Layout';
 import { Settings as SettingsComponent } from './components/Settings';
@@ -46,7 +47,6 @@ import { MissingDaysModal } from './components/MissingDaysModal';
 import { seedUserCustomCategories, fetchGlobalPresets } from './lib/categoryUtils';
 import { VantageVoiceAssistant } from './components/VantageVoiceAssistant';
 
-
 const Essentials = EssentialsComponent;
 const Accounts = AccountsComponent;
 const VantageAI = VantageAIComponent;
@@ -64,24 +64,21 @@ const animation = {
 
 // We isolate the internal application content so the parent Error Boundary can monitor its states
 function AppContent() {
+  const { user: authUser, authReady } = useAuth();
   const { i18n: i18nextInstance } = useTranslation();
   const [profile, setProfile] = useState<any>(() => {
     return secureLoad('vantage_user_profile', null);
   });
 
+  // Strict Auth binding: If Firebase Auth is not signed in, user must be null to trigger BiometricLogin
   const [user, setUser] = useState<any>(() => {
-    const cached = secureLoad('vantage_user_profile', null);
-    if (cached?.uid) {
-      return { uid: cached.uid, email: cached.email || '' };
+    if (auth.currentUser) {
+      return { uid: auth.currentUser.uid, email: auth.currentUser.email || '' };
     }
     return null;
   });
 
-  // If profile exists in local cache, loading is FALSE on frame 0 (Zero screen freeze)
-  const [loading, setLoading] = useState<boolean>(() => {
-    const cached = secureLoad('vantage_user_profile', null);
-    return !cached;
-  });
+  const [loading, setLoading] = useState<boolean>(!authReady);
   const [activeTab, setActiveTab] = useState<Tab>('essentials');
   const [streakUpdated, setStreakUpdated] = useState(false);
   const [showStreakAnimation, setShowStreakAnimation] = useState(false);
@@ -173,8 +170,6 @@ function AppContent() {
     return () => window.removeEventListener('open-voice-assistant', handleOpenVoice);
   }, []);
 
-
-
   useEffect(() => {
     const handleOpenRedeem = () => setIsRedeemModalOpen(true);
     window.addEventListener('trigger-redeem-invite-modal', handleOpenRedeem);
@@ -192,7 +187,6 @@ function AppContent() {
     let tapTimer: any = null;
 
     const handlePointerDown = (e: PointerEvent) => {
-      // Ignore taps inside input, select, textarea or interactive editable elements
       const target = e.target as HTMLElement;
       if (target && (
         target.tagName === 'INPUT' || 
@@ -245,17 +239,17 @@ function AppContent() {
   };
 
   const verifyStreak = useCallback(async (uid: string, profileData: any) => {
-    if (!uid || !profileData) return;
+    // 🛡️ CRITICAL GUARD: Never write or query Firestore unless authenticated
+    if (!uid || !profileData || !auth.currentUser) return;
     const todayStr = getLocalDateString();
     const lastLoginDate = profileData.lastLoginDate;
     const streakShownKey = `vantage_streak_shown_${todayStr}`;
     const alreadyShownToday = localStorage.getItem(streakShownKey) === 'true';
 
     if (lastLoginDate === todayStr && alreadyShownToday) {
-      return; // Already verified and shown today
+      return;
     }
 
-    // Log the daily login event into userLogins subcollection safely
     try {
       const loginRef = doc(db, 'users', uid, 'userLogins', todayStr);
       await setDoc(loginRef, { userId: uid, timestamp: getSimulatedDate(), date: todayStr }, { merge: true });
@@ -263,7 +257,6 @@ function AppContent() {
       console.warn("User login ledger write deferred:", err);
     }
 
-    // Calculate true streak from userLogins collection to prevent stale cache discrepancies
     let calculatedStreak = profileData.dailyStreak || 1;
     try {
       const loginsRef = collection(db, 'users', uid, 'userLogins');
@@ -302,7 +295,7 @@ function AppContent() {
     }
 
     if (profileData.dailyStreak !== undefined && profileData.dailyStreak >= calculatedStreak && lastLoginDate === todayStr && alreadyShownToday) {
-      return; // Already updated today and cache is up to date
+      return;
     }
 
     try {
@@ -436,25 +429,23 @@ function AppContent() {
   }, []);
 
   const isResolvedRef = useRef(false);
-
   const userRef = useRef(user);
 
   useEffect(() => { userRef.current = user; }, [user]);
 
-  // Verify streak once per session/day to prevent lag and unnecessary re-fetches
+  // Verify streak once per session/day only if user is actively authenticated
   useEffect(() => {
-    if (!user?.uid || !profile) return;
+    if (!authUser?.uid || !profile) return;
     const todayStr = getLocalDateString();
-    const verifiedKey = `vantage_streak_verified_${user.uid}_${todayStr}`;
+    const verifiedKey = `vantage_streak_verified_${authUser.uid}_${todayStr}`;
     if (sessionStorage.getItem(verifiedKey)) return;
     sessionStorage.setItem(verifiedKey, 'true');
 
-    verifyStreak(user.uid, profile);
-  }, [user?.uid, verifyStreak]);
+    verifyStreak(authUser.uid, profile);
+  }, [authUser?.uid, profile, verifyStreak]);
 
-  // 🛡️ OFFLINE-FIRST: Hydrate state from local cache on mount
+  // Offline hydration
   useEffect(() => {
-    // Ensure splash screen is removed when React mounts
     const splash = document.getElementById('splash-screen');
     if (splash) {
       splash.classList.add('fade-out');
@@ -464,13 +455,12 @@ function AppContent() {
     }
 
     const profileData = secureLoad('vantage_user_profile', null);
-    if (profileData && profileData.uid) {
+    if (profileData && profileData.uid && auth.currentUser) {
       try {
         setUser({ uid: profileData.uid, email: profileData.email });
         setProfile(profileData);
-        isResolvedRef.current = true; // Prevents onAuthStateChanged from overriding
-        setLoading(false); // Quick render from cache
-        console.log("[Vantage Offline-First] Hydrated state from secure cache.");
+        isResolvedRef.current = true;
+        setLoading(false);
       } catch (e) {
         console.error("[Vantage Offline-First] Failed to hydrate:", e);
       }
@@ -485,7 +475,7 @@ function AppContent() {
     }
   }, []);
 
-  // Synchronized state pools for analytics routing
+  // Synchronized state pools
   const [activeWorkspaceUid, setActiveWorkspaceUid] = useState<string>('');
   const [accounts, setAccounts] = useState<any[]>(() => {
     const profileCached = secureLoad('vantage_user_profile', null);
@@ -524,9 +514,7 @@ function AppContent() {
       try {
         const rates = await syncExchangeRates();
         setExchangeRates(rates);
-      } catch (err) {
-        // Safe suppressor
-      }
+      } catch (err) {}
     };
     loadRates();
   }, []);
@@ -562,11 +550,10 @@ function AppContent() {
     window.addEventListener('trigger-premium-modal', handleOpenPremium);
     window.addEventListener('open-premium-modal', handleOpenPremium);
     
-    // Weekend Wrap-Up Sunday Evening Check & Event Listeners
     const checkSundayEvening = () => {
       const now = getSimulatedDate();
       const isSunday = now.getDay() === 0;
-      const isEvening = now.getHours() >= 17; // 5:00 PM or later
+      const isEvening = now.getHours() >= 17;
       if (isSunday && isEvening) {
         const todayStr = toLocalDateString(now);
         const storageKey = `vantage_weekend_wrapup_shown_${todayStr}`;
@@ -579,11 +566,10 @@ function AppContent() {
     };
     checkSundayEvening();
 
-    // 🎆 Annual Financial Story (Wrapped) Check: 1st of January at 9 PM local time
     const checkAnnualWrapped = () => {
       const now = getSimulatedDate();
-      const isJan1st = now.getMonth() === 0 && now.getDate() === 1; // Month 0 is January
-      const is9PMOrLater = now.getHours() >= 21; // 21:00 or later local time
+      const isJan1st = now.getMonth() === 0 && now.getDate() === 1;
+      const is9PMOrLater = now.getHours() >= 21;
       if (isJan1st && is9PMOrLater) {
         const year = now.getFullYear();
         const storageKey = `vantage_annual_wrapped_shown_${year}`;
@@ -641,63 +627,57 @@ function AppContent() {
     window.dispatchEvent(new CustomEvent('sms-modal-toggled', { detail: { isOpen: isSmsModalOpen } }));
   }, [isSmsModalOpen]);
 
+  // Auth synchronization effect
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        
-        const profileRef = doc(db, 'users', currentUser.uid);
-        
-        const unsubProfile = onSnapshot(profileRef, { includeMetadataChanges: true }, (docSnap) => {
-          // Unblock immediately
-          setLoading(false);
+    if (!authReady) return;
 
-          if (docSnap.exists()) {
-            const profileData = docSnap.data();
-            const userEmail = (currentUser.email || profileData.email || '').toLowerCase().trim();
-            const shouldBeAdmin = userEmail === 'support@yourfinances.me';
-            const fullProfile = { uid: currentUser.uid, ...profileData, isAdmin: shouldBeAdmin };
-
-            setProfile(fullProfile);
-            secureSave('vantage_user_profile', fullProfile);
-            secureSave(`vantage_offline_profile_${currentUser.uid}`, fullProfile);
-
-            if (profileData.language) {
-              i18n.changeLanguage(profileData.language);
-            }
-          }
-        }, (error) => {
-          console.warn("Using offline cached profile:", error);
-          setLoading(false);
-        });
-
-        return () => unsubProfile();
-      } else {
-        // Clear state only on explicit signout
-        if (!secureLoad('vantage_user_profile', null)) {
-          setUser(null);
-          setProfile(null);
-        }
+    if (authUser) {
+      setUser(authUser);
+      const profileRef = doc(db, 'users', authUser.uid);
+      
+      const unsubProfile = onSnapshot(profileRef, { includeMetadataChanges: true }, (docSnap) => {
         setLoading(false);
-      }
-    });
 
-    return () => unsubscribeAuth();
-  }, []);
+        if (docSnap.exists()) {
+          const profileData = docSnap.data();
+          const userEmail = (authUser.email || profileData.email || '').toLowerCase().trim();
+          const shouldBeAdmin = userEmail === 'support@yourfinances.me';
+          const fullProfile = { uid: authUser.uid, ...profileData, isAdmin: shouldBeAdmin };
+
+          setProfile(fullProfile);
+          secureSave('vantage_user_profile', fullProfile);
+          secureSave(`vantage_offline_profile_${authUser.uid}`, fullProfile);
+
+          if (profileData.language) {
+            i18n.changeLanguage(profileData.language);
+          }
+        }
+      }, (error) => {
+        console.warn("Using offline cached profile:", error);
+        setLoading(false);
+      });
+
+      return () => unsubProfile();
+    } else {
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+    }
+  }, [authUser, authReady]);
 
   // Instant offline hydration for accounts & transactions from secure local cache
   useEffect(() => {
-    if (!user?.uid) return;
-    const cachedAcc = secureLoad(`vantage_offline_accounts_${user.uid}`) || secureLoad('vantage_accounts');
+    if (!authUser?.uid) return;
+    const cachedAcc = secureLoad(`vantage_offline_accounts_${authUser.uid}`) || secureLoad('vantage_accounts');
     if (cachedAcc) setAccounts(cachedAcc);
-    const cachedTx = secureLoad(`vantage_offline_transactions_${user.uid}`) || secureLoad('vantage_transactions');
+    const cachedTx = secureLoad(`vantage_offline_transactions_${authUser.uid}`) || secureLoad('vantage_transactions');
     if (cachedTx) setTransactions(cachedTx);
-  }, [user?.uid]);
+  }, [authUser?.uid]);
 
-  // Sync structural account balances matrices downstream when active user logs exist
+  // 🛡️ CRITICAL FIX: Only bind live listeners if auth.currentUser is authenticated in Firebase SDK
   useEffect(() => {
-    if (!user || loading) return;
-    const targetUid = activeWorkspaceUid || user.uid;
+    if (!authUser || !auth.currentUser || loading) return;
+    const targetUid = activeWorkspaceUid || authUser.uid;
 
     let unsubAccounts: any = () => {};
     let unsubTx: any = () => {};
@@ -715,7 +695,7 @@ function AppContent() {
         secureSave('vantage_accounts', accList);
         secureSave(`vantage_offline_accounts_${targetUid}`, accList);
       }, (error) => {
-        console.warn("Accounts streaming transport errored, attempting fallback:", error);
+        console.warn("Accounts streaming transport errored, attempting fallback:", error.message);
         const cached = secureLoad(`vantage_offline_accounts_${targetUid}`) || secureLoad('vantage_accounts');
         if (cached) setAccounts(cached);
       });
@@ -728,18 +708,18 @@ function AppContent() {
         secureSave('vantage_transactions', txList);
         secureSave(`vantage_offline_transactions_${targetUid}`, txList);
       }, (error) => {
-        console.warn("Ledger streaming transport errored, attempting fallback:", error);
+        console.warn("Ledger streaming transport errored, attempting fallback:", error.message);
         const cached = secureLoad(`vantage_offline_transactions_${targetUid}`) || secureLoad('vantage_transactions');
         if (cached) setTransactions(cached);
       });
 
-      const loginsRef = collection(db, 'users', user.uid, 'userLogins');
+      const loginsRef = collection(db, 'users', authUser.uid, 'userLogins');
       unsubLogins = onSnapshot(loginsRef, (snapshot) => {
         const loginsList: any[] = [];
         snapshot.forEach(doc => loginsList.push({ id: doc.id, ...doc.data() }));
         setUserLogins(loginsList);
       }, (error) => {
-        console.warn("Logins streaming transport errored safely:", error);
+        console.warn("Logins streaming transport errored safely:", error.message);
       });
     }, 150);
 
@@ -749,7 +729,7 @@ function AppContent() {
       unsubTx();
       unsubLogins();
     };
-  }, [user, activeWorkspaceUid, loading]);
+  }, [authUser, activeWorkspaceUid, loading]);
 
   if (publicCartId) {
     return (
@@ -760,11 +740,12 @@ function AppContent() {
     );
   }
 
-  if (loading) {
+  // 1. Loading gate while Firebase Auth resolves
+  if (!authReady || loading) {
     return (
       <div className="w-full min-h-screen bg-[#1E2229] flex flex-col items-center justify-center select-none">
         <RefreshCw size={24} className="text-[#A6DDB1] animate-spin" />
-        <span className="text-xs font-mono tracking-wider text-neutral-400 mt-3">Loading</span>
+        <span className="text-xs font-mono tracking-wider text-neutral-400 mt-3">Establishing Secure Session...</span>
         <button
           onClick={() => { signOut(auth); localStorage.removeItem('vantage_user_profile'); window.location.reload(); }}
           className="mt-8 px-4 py-2 bg-neutral-800 rounded-full text-[10px] font-bold text-neutral-400 hover:text-white cursor-pointer"
@@ -775,21 +756,23 @@ function AppContent() {
     );
   }
 
-  // GATE A: Enforce password authentication wall
-  if (!user) {
-    return <BiometricLogin onSuccess={(profileData) => { 
-      localStorage.setItem('vantage_user_profile', JSON.stringify(profileData));
-      setUser({ uid: profileData.uid, email: profileData.email }); 
-      setProfile(profileData); 
-    }} />;
+  // 2. GATE A: If unauthenticated in Firebase Auth, require sign-in (Never bypass via localStorage)
+  if (!authUser) {
+    return (
+      <BiometricLogin onSuccess={(profileData) => { 
+        localStorage.setItem('vantage_user_profile', JSON.stringify(profileData));
+        setUser({ uid: profileData.uid, email: profileData.email }); 
+        setProfile(profileData); 
+      }} />
+    );
   }
 
-  // GATE B: Defer advanced features until onboarding registration checks clear
+  // 3. GATE B: Defer advanced features until onboarding registration checks clear
   if (!profile || profile.hasAcceptedTerms === false || !profile.baseCurrency) {
-    return <OnboardingFlow uid={user.uid} profile={profile} onSuccess={() => window.location.reload()} />;
+    return <OnboardingFlow uid={authUser.uid} profile={profile} onSuccess={() => window.location.reload()} />;
   }
 
-  const effectiveUid = activeWorkspaceUid || user.uid;
+  const effectiveUid = activeWorkspaceUid || authUser.uid;
   const effectiveProfile = activeWorkspaceUid ? {
     ...profile,
     uid: activeWorkspaceUid
@@ -807,7 +790,7 @@ function AppContent() {
       setIsTxModalOpen={setIsTxModalOpen}
       txMode={txMode}
       setTxMode={setTxMode}
-      profile={profile}
+      profile={effectiveProfile}
       accounts={accounts}
       transactions={transactions}
       accountBalances={accountBalances}
@@ -860,72 +843,71 @@ function AppContent() {
           <button onClick={() => setQuotaExceeded(false)} className="underline font-bold text-amber-900 ml-2">Dismiss</button>
         </div>
       )}
-     <Suspense fallback={<div className="w-full h-full flex items-center justify-center"><RefreshCw size={24} className="text-[#A6DDB1] animate-spin" /></div>}>
-     <AnimatePresence mode="wait">
-  {activeTab === 'essentials' && (
-    <motion.div key="essentials" {...animation}>
-      <Essentials profile={effectiveProfile} />
-    </motion.div>
-  )}
-  {activeTab === 'accounts' && (
-    <motion.div key="accounts" {...animation}>
-      <Accounts profile={effectiveProfile} />
-    </motion.div>
-  )}
-{activeTab === 'ai' && (
-  <motion.div key="ai" {...animation}>
-    <VantageAI 
-      isOpen={true} // Set to true to show it in the tab
-      onClose={() => setActiveTab('essentials')} // Redirect back to home
-      uid={effectiveUid}
-      profile={effectiveProfile}
-      accounts={accounts}
-      transactions={transactions}
-      accountBalances={accountBalances}
-      onNavigateTab={(tab) => setActiveTab(tab)}
-      onOpenModal={(modal) => {
-        if (modal === 'transaction') setIsTxModalOpen(true);
-        if (modal === 'account') setIsAddAccountOpen(true);
-        if (modal === 'goal') setIsMilestoneModalOpen(true);
-      }}
-    />
-  </motion.div>
-)}
-  {activeTab === 'activity' && (
-    <motion.div key="activity" {...animation}>
-      <Transactions 
-        uid={effectiveUid} 
-        accounts={accounts} 
-        profile={effectiveProfile} 
-        baseCurrency={effectiveProfile.baseCurrency || 'AED'} 
-        getRateToAED={getRateToAED} 
-      />
-    </motion.div>
-  )}
-{activeTab === 'analytics' && (
-  <motion.div key="analytics" {...animation}>
-    <Analytics 
-      onNavigateToTransactions={() => setActiveTab('activity')}
-      profile={effectiveProfile} 
-      allTransactions={transactions || []} // This must be exactly 'allTransactions'
-      accounts={accounts || []} 
-      accountBalances={accountBalances || {}}
-    />
-  </motion.div>
-)}
-  {activeTab === 'settings' && (
-  <motion.div key="settings" {...animation}>
-    <Settings 
-      profile={effectiveProfile} 
-      accounts={accounts} 
-      onUpdateProfile={(updated) => setProfile(updated)} 
-      onBack={() => setActiveTab('essentials')}
-    />
-  </motion.div>
-)}
-
-</AnimatePresence>
-</Suspense>
+      <Suspense fallback={<div className="w-full h-full flex items-center justify-center"><RefreshCw size={24} className="text-[#A6DDB1] animate-spin" /></div>}>
+        <AnimatePresence mode="wait">
+          {activeTab === 'essentials' && (
+            <motion.div key="essentials" {...animation}>
+              <Essentials profile={effectiveProfile} />
+            </motion.div>
+          )}
+          {activeTab === 'accounts' && (
+            <motion.div key="accounts" {...animation}>
+              <Accounts profile={effectiveProfile} />
+            </motion.div>
+          )}
+          {activeTab === 'ai' && (
+            <motion.div key="ai" {...animation}>
+              <VantageAI 
+                isOpen={true}
+                onClose={() => setActiveTab('essentials')}
+                uid={effectiveUid}
+                profile={effectiveProfile}
+                accounts={accounts}
+                transactions={transactions}
+                accountBalances={accountBalances}
+                onNavigateTab={(tab) => setActiveTab(tab)}
+                onOpenModal={(modal) => {
+                  if (modal === 'transaction') setIsTxModalOpen(true);
+                  if (modal === 'account') setIsAddAccountOpen(true);
+                  if (modal === 'goal') setIsMilestoneModalOpen(true);
+                }}
+              />
+            </motion.div>
+          )}
+          {activeTab === 'activity' && (
+            <motion.div key="activity" {...animation}>
+              <Transactions 
+                uid={effectiveUid} 
+                accounts={accounts} 
+                profile={effectiveProfile} 
+                baseCurrency={effectiveProfile.baseCurrency || 'AED'} 
+                getRateToAED={getRateToAED} 
+              />
+            </motion.div>
+          )}
+          {activeTab === 'analytics' && (
+            <motion.div key="analytics" {...animation}>
+              <Analytics 
+                onNavigateToTransactions={() => setActiveTab('activity')}
+                profile={effectiveProfile} 
+                allTransactions={transactions || []}
+                accounts={accounts || []} 
+                accountBalances={accountBalances || {}}
+              />
+            </motion.div>
+          )}
+          {activeTab === 'settings' && (
+            <motion.div key="settings" {...animation}>
+              <Settings 
+                profile={effectiveProfile} 
+                accounts={accounts} 
+                onUpdateProfile={(updated) => setProfile(updated)} 
+                onBack={() => setActiveTab('essentials')}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </Suspense>
 
       {/* FLOATING ACTION OVERLAYS PANEL HUB */}
       <AnimatePresence>
@@ -1096,17 +1078,15 @@ function AppContent() {
   );
 }
 
-
-// 🛡️ MASTER MOUNT: Guarding the full component tree with native fallback triggers
-export const App = () => {
+// 🛡️ MASTER MOUNT: Guarding the full component tree with native fallback triggers and Auth Ready Gate
+export default function App() {
   return (
     <I18nextProvider i18n={i18n}>
       <VantageDataErrorBoundary>
-        <AppContent />
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
       </VantageDataErrorBoundary>
     </I18nextProvider>
   );
-};
-
-
-export default App;
+}

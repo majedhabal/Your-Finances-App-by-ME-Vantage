@@ -9,6 +9,8 @@ import { TransactionDetailModal } from './TransactionDetailModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ConfirmRecurringTransactionModal } from './ConfirmRecurringTransactionModal';
 import { getCachedAccessToken, connectGoogleWorkspace, createGoogleTask } from '../lib/googleAuth';
+import { handleApprovalAction } from '../services/recurringService';
+import { getCanonicalCategoryId } from '../services/vantageAiContext';
 
 interface PendingApprovalsProps {
   uid: string;
@@ -19,6 +21,7 @@ interface PendingApprovalsProps {
 export const PendingApprovals: React.FC<PendingApprovalsProps> = ({ uid, accounts, onTransactionApproved }) => {
   const { t } = useTranslation();
   const [drafts, setDrafts] = useState<any[]>([]);
+  const [pendingApprovalsList, setPendingApprovalsList] = useState<any[]>([]);
   const [recurringTxs, setRecurringTxs] = useState<any[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedTx, setSelectedTx] = useState<any | null>(null);
@@ -64,6 +67,30 @@ export const PendingApprovals: React.FC<PendingApprovalsProps> = ({ uid, account
   useEffect(() => {
     if (!uid) return;
 
+    // Listen to Dedicated Pending Approvals collection
+    const qPending = query(
+      collection(db, `users/${uid}/pending_approvals`),
+      where('status', '==', 'pending')
+    );
+    const unsubPending = onSnapshot(qPending, (snap) => {
+      setPendingApprovalsList(snap.docs.map(docSnap => {
+        const d = docSnap.data();
+        return {
+          id: docSnap.id,
+          isPendingApprovalCol: true,
+          notes: d.name,
+          amount: Number(d.amount || 0),
+          category: d.category,
+          date: d.dueDate,
+          ruleId: d.ruleId,
+          status: d.status,
+          type: d.category === 'Income' ? 'income' : 'expense',
+          accountId: d.sourceAccountId || (accounts && accounts[0]?.id) || '',
+          ...d
+        };
+      }));
+    });
+
     // Listen to Draft Transactions
     const qDrafts = query(
       collection(db, `users/${uid}/transactions`),
@@ -89,11 +116,12 @@ export const PendingApprovals: React.FC<PendingApprovalsProps> = ({ uid, account
     });
 
     return () => {
+      unsubPending();
       unsubDrafts();
       unsubAll();
       unsubRecurring();
     };
-  }, [uid]);
+  }, [uid, accounts]);
 
   const calculateNextDate = (baseDate: string, freq: string, interval: number, dayOption: 'sameDay' | 'sameDate' = 'sameDate') => {
     // Create date from YYYY-MM-DD at noon local time to avoid timezone shifts
@@ -163,6 +191,7 @@ export const PendingApprovals: React.FC<PendingApprovalsProps> = ({ uid, account
           amount: rec.amount,
           accountId: rec.accountId,
           category: rec.category,
+          categoryId: getCanonicalCategoryId(rec.category, rec.subcategory),
           subcategory: rec.subcategory || null,
           emoji: rec.emoji || null,
           notes: rec.notes ? `${rec.notes} (Recurring)` : t('pending_approvals.recurring_note', 'Recurring Transaction'),
@@ -214,6 +243,60 @@ export const PendingApprovals: React.FC<PendingApprovalsProps> = ({ uid, account
   const handleApprove = async (tx: any) => {
     setIsProcessing(true);
     try {
+      if (tx.isPendingApprovalCol) {
+        // 1. Decoupled Pending Approval: Use transactional handleApprovalAction
+        await handleApprovalAction(uid, tx.id, 'confirm');
+
+        // 2. Atomically update the target account balance & miniBudget
+        const targetAccId = tx.accountId || tx.sourceAccountId || (accounts && accounts.length > 0 ? accounts[0].id : '');
+        const amt = Number(tx.amount || 0);
+        const txType = (tx.type || '').toLowerCase();
+        const isIncome = txType === 'income' || txType === 'inflow';
+        const amountChange = isIncome ? amt : -amt;
+
+        const batch = writeBatch(db);
+        let hasBatchWrites = false;
+
+        if (targetAccId) {
+          const accRef = doc(db, `users/${uid}/accounts`, targetAccId);
+          const accSnap = await getDoc(accRef);
+          if (accSnap.exists()) {
+            batch.update(accRef, {
+              currentBalance: increment(amountChange),
+              updatedAt: serverTimestamp()
+            });
+            hasBatchWrites = true;
+          }
+        }
+
+        if (!isIncome && tx.category) {
+          const queryBudgets = query(
+            collection(db, `users/${uid}/miniBudgets`),
+            where('userId', '==', uid)
+          );
+          const querySnap = await getDocs(queryBudgets);
+          const matchingBudgetDoc = querySnap.docs.find(docSnap => {
+            const data = docSnap.data();
+            return data.categoryTitle === tx.category || data.category === tx.category;
+          });
+          if (matchingBudgetDoc) {
+            const budgetRef = doc(db, `users/${uid}/miniBudgets`, matchingBudgetDoc.id);
+            batch.update(budgetRef, {
+              spentAmount: increment(amt),
+              updatedAt: serverTimestamp()
+            });
+            hasBatchWrites = true;
+          }
+        }
+
+        if (hasBatchWrites) {
+          await batch.commit();
+        }
+        onTransactionApproved?.();
+        return;
+      }
+
+      // Legacy draft transactions approval fallback
       const batch = writeBatch(db);
       
       // 1. Update transaction status to confirmed
@@ -277,18 +360,23 @@ export const PendingApprovals: React.FC<PendingApprovalsProps> = ({ uid, account
     if (!txToDelete) return;
     setIsProcessing(true);
     try {
-      const txRef = doc(db, `users/${uid}/transactions`, txToDelete.id);
-      await deleteDoc(txRef);
+      if (txToDelete.isPendingApprovalCol) {
+        // Dedicated pending_approvals: Reject without deleting recurring rule
+        await handleApprovalAction(uid, txToDelete.id, 'reject');
+      } else {
+        const txRef = doc(db, `users/${uid}/transactions`, txToDelete.id);
+        await deleteDoc(txRef);
+      }
       setTxToDelete(null);
     } catch (err: any) {
-       handleFirestoreError(err, OperationType.DELETE, `users/${uid}/transactions/${txToDelete.id}`);
+       handleFirestoreError(err, OperationType.DELETE, `users/${uid}/pending_approvals/${txToDelete.id}`);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const visibleDrafts = React.useMemo(() => {
-    return drafts.filter(tx => {
+    const legacyFiltered = drafts.filter(tx => {
       const txMonth = tx.date ? tx.date.substring(0, 7) : '';
       const recId = tx.recurringId;
       const txTitle = (tx.notes || tx.category || '').replace('(Recurring)', '').replace('(recurring)', '').trim().toLowerCase();
@@ -311,7 +399,17 @@ export const PendingApprovals: React.FC<PendingApprovalsProps> = ({ uid, account
 
       return !hasConfirmedForMonth;
     });
-  }, [drafts, allTxs]);
+
+    // Merge dedicated pending approvals and legacy drafts, avoiding duplicates
+    const all = [...pendingApprovalsList, ...legacyFiltered];
+    const seen = new Set<string>();
+    return all.filter(item => {
+      const key = `${item.ruleId || item.recurringId || item.notes}_${item.date}_${item.amount}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [drafts, pendingApprovalsList, allTxs]);
 
   if (visibleDrafts.length === 0) return null;
 

@@ -34,7 +34,7 @@ import {
   writeBatch,
   addDoc
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 import { AddAccountModal } from './AddAccountModal';
 import { AccountDetailModal } from './AccountDetailModal';
@@ -112,13 +112,15 @@ export const Accounts: React.FC<AccountsProps> = ({ profile, onNavigateToTransac
     loadRates();
   }, []);
 
+  // WITH THIS (Guarded against premature unauthenticated execution):
   useEffect(() => {
-    if (!profile?.uid) return;
+    // 🛡️ CRITICAL GUARD: Abort if Firebase Auth is not active
+    if (!profile?.uid || !auth.currentUser) return;
+    const userId = auth.currentUser.uid;
 
-    // Fetch Accounts
-    const qAcc = query(collection(db, `users/${profile.uid}/accounts`), orderBy('name', 'asc'));
+    // Fetch Accounts securely
+    const qAcc = query(collection(db, `users/${userId}/accounts`), orderBy('name', 'asc'));
     const unsubscribeAcc = onSnapshot(qAcc, (snapshot) => {
-      console.log('New Data Detected', { collection: 'accounts', count: snapshot.size });
       const accData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -126,19 +128,19 @@ export const Accounts: React.FC<AccountsProps> = ({ profile, onNavigateToTransac
       setAccounts(accData);
       setIsLoading(prev => transactions.length > 0 ? false : prev);
     }, (err) => {
-      handleFirestoreError(err, OperationType.LIST, `users/${profile.uid}/accounts`);
+      console.warn("[Accounts Stream Paused]:", err.message);
     });
 
-    // Fetch Transactions for Live Balances
-    const qTx = query(collection(db, `users/${profile.uid}/transactions`), orderBy('date', 'desc'));
+    const qTx = query(collection(db, `users/${userId}/transactions`), orderBy('date', 'desc'));
     const unsubscribeTx = onSnapshot(qTx, (snapshot) => {
-      console.log('New Data Detected', { collection: 'accounts_txs', count: snapshot.size });
       const txData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
       setTransactions(txData);
       setIsLoading(false);
+    }, (err) => {
+      console.warn("[Transactions Stream Paused]:", err.message);
     });
 
     return () => {
@@ -146,6 +148,7 @@ export const Accounts: React.FC<AccountsProps> = ({ profile, onNavigateToTransac
       unsubscribeTx();
     };
   }, [profile?.uid]);
+
 
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isManageMode, setIsManageMode] = useState(false);

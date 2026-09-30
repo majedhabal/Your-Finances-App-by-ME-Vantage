@@ -7,6 +7,7 @@ import { db, auth, getCurrentUser } from '../lib/firebase';
 import { MASTER_CATEGORIES } from '../lib/constants';
 import { PremiumModal } from './PremiumModal';
 import { consumeAiTokensAndScans, getEffectiveAiTokens } from '../lib/tokenConsumption';
+import { getCanonicalCategoryId } from '../services/vantageAiContext';
 
 interface ReceiptScannerModalProps {
   isOpen: boolean;
@@ -379,6 +380,7 @@ Do not wrap in markdown tags.`
           amount: Number(tx.amount),
           notes: tx.notes.trim() || `Receipt: ${tx.merchant || 'Store'}`,
           category: tx.category,
+          categoryId: getCanonicalCategoryId(tx.category, tx.subcategory),
           subcategory: tx.subcategory,
           emoji: categoryEntry?.emoji || '🛍️',
           accountId: targetAcc,

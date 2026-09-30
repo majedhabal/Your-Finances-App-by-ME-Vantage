@@ -9,6 +9,7 @@ import { getCachedAccessToken, createGoogleCalendarEvent, createGoogleTask, conn
 import { MASTER_CATEGORIES } from '../lib/constants';
 import { getLocalTodayString, getLocalCurrentMonthString } from '../lib/dateSimulator';
 import { DEFAULT_RATES } from '../lib/exchangeRates';
+import { getCanonicalCategoryId } from '../services/vantageAiContext';
 
 const getRateToAED = (curr: string) => {
   const c = curr || 'AED';
@@ -407,6 +408,7 @@ export const AddTransactionModal: React.FC<any> = ({
         currency: accountCurrency,
         notes: `${notes.trim()} (Split into ${countNum} installments)`.trim(),
         category,
+        categoryId: getCanonicalCategoryId(category, subcategory),
         subcategory,
         subCategory: subcategory,
         emoji: selectedCategoryEntry?.emoji || '💳',
@@ -494,6 +496,7 @@ export const AddTransactionModal: React.FC<any> = ({
           toAmount: destAmount,
           notes: notes.trim() || `Transfer to ${destAcc?.name || 'Account'}`,
           category: 'Transfer',
+          categoryId: 'transfer',
           subcategory: 'Internal Transfer',
           emoji: '💸',
           accountId,
@@ -514,6 +517,7 @@ export const AddTransactionModal: React.FC<any> = ({
           currency: destCurrency,
           notes: notes.trim() || `Transfer from ${sourceAcc?.name || 'Account'}`,
           category: 'Transfer',
+          categoryId: 'transfer',
           subcategory: 'Internal Transfer',
           emoji: '💰',
           accountId: toAccountId,
@@ -571,6 +575,7 @@ export const AddTransactionModal: React.FC<any> = ({
           currency: accountCurrency,
           notes: notes.trim(),
           category,
+          categoryId: getCanonicalCategoryId(category, subcategory),
           subcategory,
           subCategory: subcategory,
           emoji: selectedCategoryEntry?.emoji || '💳',

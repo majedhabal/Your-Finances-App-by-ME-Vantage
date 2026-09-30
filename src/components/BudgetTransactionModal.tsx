@@ -8,6 +8,7 @@ import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
 import { useTranslation } from '@/lib/i18n';
 import { translateCategoryOrSubcategory } from '../lib/stringUtils';
 import { DEFAULT_RATES } from '../lib/exchangeRates';
+import { getCanonicalCategoryId } from '../services/vantageAiContext';
 
 const getRateToAED = (curr: string) => {
   const c = curr || 'AED';
@@ -201,6 +202,7 @@ export const BudgetTransactionModal: React.FC<{
           toAmount: type === 'transfer' ? destAmount : null,
           type: type === 'transfer' ? 'transfer' : 'expense',
           category: derivedCategory || 'General',
+          categoryId: getCanonicalCategoryId(derivedCategory, derivedSubcategory),
           subcategory: derivedSubcategory || '',
           subCategory: derivedSubcategory || '', // Sync both keys
           destinationAccountId: type === 'transfer' ? destinationAccountId : null,
