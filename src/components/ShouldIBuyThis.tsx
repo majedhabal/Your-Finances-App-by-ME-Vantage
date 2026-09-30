@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { getEffectiveAiTokens } from '../lib/tokenConsumption';
 import { 
   Sparkles, 
-  ShoppingBag, 
   Lock, 
   CheckCircle2, 
   AlertTriangle, 
@@ -18,15 +18,17 @@ import {
   HelpCircle,
   X,
   TrendingDown,
+  ShoppingBag,
   ChevronRight,
   Zap,
   Tag,
   Check
 } from 'lucide-react';
 import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc, serverTimestamp, runTransaction, updateDoc } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { db, auth, getCurrentUser } from '../lib/firebase';
 import { generateAIContent } from '../lib/gemini';
 import { logAIUsage } from '../lib/aiUsageTracker';
+import { consumeAiTokensAndScans } from '../lib/tokenConsumption';
 
 interface ShouldIBuyThisProps {
   profile: any;
@@ -64,7 +66,7 @@ export const ShouldIBuyThis: React.FC<ShouldIBuyThisProps> = ({
                      rawTier.includes('premium') ||
                      rawTier.includes('pro');
 
-  const currentTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+  const currentTokens = getEffectiveAiTokens(profile);
   const hasAIAccess = isTier2Or3 || !!(profile?.vantageAiUnlockedUntil && new Date(profile.vantageAiUnlockedUntil).getTime() > Date.now()) || currentTokens > 0;
 
   // Input state
@@ -273,7 +275,12 @@ export const ShouldIBuyThis: React.FC<ShouldIBuyThisProps> = ({
     ];
 
     try {
-      const user = auth.currentUser;
+      const tokenCost = 6500;
+      if (profile?.uid) {
+        await consumeAiTokensAndScans(profile.uid, profile, tokenCost, 0);
+      }
+
+      const user = await getCurrentUser();
       const idToken = user ? await user.getIdToken() : '';
       const response = await fetch('/api/ai/should-i-buy', {
         method: 'POST',
@@ -286,18 +293,13 @@ export const ShouldIBuyThis: React.FC<ShouldIBuyThisProps> = ({
           currency,
           hourlyRate: metrics.hourlyRate,
           liquidCash: metrics.liquidCash,
-          unallocatedBuffer: metrics.unallocatedBuffer
+          unallocatedBuffer: metrics.unallocatedBuffer,
+          geminiKey: profile?.geminiKey
         })
       });
 
       if (response.ok) {
         const data = await response.json();
-        // Decrement tokens dynamically on successful fetch
-        if (profile?.uid) {
-          const userRef = doc(db, 'users', profile.uid);
-          const nextTokens = Math.max(0, currentTokens - 6500);
-          updateDoc(userRef, { vantageAiTokens: nextTokens }).catch(err => console.error(err));
-        }
 
         if (data && data.price) {
           itemName = data.itemName || textToEvaluate;
@@ -309,9 +311,15 @@ export const ShouldIBuyThis: React.FC<ShouldIBuyThisProps> = ({
             aiAlternatives = data.alternatives;
           }
         }
+      } else {
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.error || `Server error (Status ${response.status})`);
       }
-    } catch (e) {
-      console.warn('Online price check fallback:', e);
+    } catch (e: any) {
+      console.error('Should I Buy AI evaluation failed:', e);
+      alert(e.message || 'Secure handshake with the AI model failed. Please verify system connection.');
+      setIsEvaluating(false);
+      return;
     }
 
     if (price <= 0) {

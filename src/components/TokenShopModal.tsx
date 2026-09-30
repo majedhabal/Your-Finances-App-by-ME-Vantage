@@ -4,6 +4,7 @@ import { ShoppingCart, X, CreditCard, Sparkles, Zap, Star, Shield } from 'lucide
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/firebaseUtils';
+import { getEffectiveAiTokens } from '../lib/tokenConsumption';
 
 interface TokenShopModalProps {
   isOpen: boolean;
@@ -76,10 +77,12 @@ export const TokenShopModal: React.FC<TokenShopModalProps> = ({ isOpen, onClose,
         updateData.streakFreezes = newFreezes;
         newProfile.streakFreezes = newFreezes;
       } else {
-        const currentTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+        const currentTokens = getEffectiveAiTokens(profile);
         const newTokens = currentTokens + (pack.tokens || 0);
         updateData.vantageAiTokens = newTokens;
+        updateData.aiTokens = newTokens;
         newProfile.vantageAiTokens = newTokens;
+        newProfile.aiTokens = newTokens;
       }
       
       await updateDoc(userRef, updateData);

@@ -6,6 +6,7 @@ import { executeVantageAITask } from '../lib/VantageAIRouter';
 import { PremiumModal } from './PremiumModal';
 import { auth, db } from '../lib/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
+import { getEffectiveAiTokens } from '../lib/tokenConsumption';
 import { PremiumMarketingCard } from './PremiumMarketingCard';
 import { AdContainer } from './AdContainer';
 
@@ -16,6 +17,7 @@ interface AIInsightsProps {
 
 export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile }) => {
   const { t } = useTranslation();
+  const effectiveTokens = getEffectiveAiTokens(profile);
   const [insight, setInsight] = useState<string | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -29,7 +31,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
   const isPremium = !!(profile?.isPremium || (profile?.subscriptionTier && profile.subscriptionTier.toLowerCase() !== 'free') || (profile?.vantageAiUnlockedUntil && new Date(profile.vantageAiUnlockedUntil).getTime() > Date.now()));
 
   const generateForecast = async () => {
-    const currentTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+    const currentTokens = effectiveTokens;
     const tokenCost = 50; // Deep Financial Forecast and Pivot points
 
     if (currentTokens < tokenCost) {
@@ -54,7 +56,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
       if (profile?.uid) {
         const userRef = doc(db, 'users', profile.uid);
         const nextTokens = Math.max(0, currentTokens - tokenCost);
-        await updateDoc(userRef, { vantageAiTokens: nextTokens });
+        await updateDoc(userRef, { vantageAiTokens: nextTokens, aiTokens: nextTokens });
       }
     } catch (err: any) {
       console.error('Forecast Error:', err);
@@ -105,7 +107,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
     if (isGeneral) setInsightLoading(true);
     else setChatLoading(true);
 
-    const currentTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+    const currentTokens = effectiveTokens;
     let tokenCost = 0;
 
     if (!isGeneral && customPrompt) {
@@ -140,7 +142,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
       if (!isGeneral && customPrompt && profile?.uid) {
         const userRef = doc(db, 'users', profile.uid);
         const nextTokens = Math.max(0, currentTokens - tokenCost);
-        await updateDoc(userRef, { vantageAiTokens: nextTokens });
+        await updateDoc(userRef, { vantageAiTokens: nextTokens, aiTokens: nextTokens });
       }
     } catch (err: any) {
       console.error('AI Insight Error:', err);
@@ -162,7 +164,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const currentTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+    const currentTokens = effectiveTokens;
     const tokenCost = 4500; // Receipt scanning is 4500 tokens
 
     if (currentTokens < tokenCost) {
@@ -189,7 +191,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
           if (profile?.uid) {
             const userRef = doc(db, 'users', profile.uid);
             const nextTokens = Math.max(0, currentTokens - tokenCost);
-            await updateDoc(userRef, { vantageAiTokens: nextTokens });
+            await updateDoc(userRef, { vantageAiTokens: nextTokens, aiTokens: nextTokens });
           }
         }
       } catch (err) {
@@ -250,7 +252,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
               </div>
               <div className="text-right">
                 <span className="text-lg font-bold text-vantage-green font-mono">
-                  {typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens.toLocaleString() : '10,000'}
+                  {effectiveTokens.toLocaleString()}
                 </span>
                 <span className="text-xs text-neutral-400 block font-normal" style={{ fontFamily: "'Google Sans', sans-serif" }}>
                   Tokens Remaining
@@ -268,7 +270,7 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
                 <div 
                   className="h-full bg-vantage-green rounded-full transition-all duration-500"
                   style={{ 
-                    width: `${Math.min(100, Math.max(0, ((50000 - (typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 10000)) / 50000) * 100))}%` 
+                    width: `${Math.min(100, Math.max(0, ((50000 - effectiveTokens) / 50000) * 100))}%` 
                   }}
                 />
               </div>
@@ -299,9 +301,9 @@ export const AIInsights: React.FC<AIInsightsProps> = ({ profile, onUpdateProfile
                 onClick={async () => {
                   if (profile?.uid) {
                     const userRef = doc(db, 'users', profile.uid);
-                    await updateDoc(userRef, { vantageAiTokens: 50000 });
+                    await updateDoc(userRef, { vantageAiTokens: 50000, aiTokens: 50000 });
                     if (onUpdateProfile) {
-                      onUpdateProfile({ ...profile, vantageAiTokens: 50000 });
+                      onUpdateProfile({ ...profile, vantageAiTokens: 50000, aiTokens: 50000 });
                     }
                   }
                 }}

@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { db } from '../lib/firebase';
-import { collection, onSnapshot, query, where, updateDoc, doc, arrayUnion } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, updateDoc, doc } from 'firebase/firestore';
 import { getToken } from 'firebase/messaging';
 import { messaging } from '../lib/firebase';
 
@@ -17,7 +17,7 @@ export const NotificationManager = ({ uid }: { uid: string }) => {
             const token = await getToken(messaging);
             if (token) {
               await updateDoc(doc(db, `users/${uid}`), {
-                fcmTokens: arrayUnion(token)
+                fcmToken: token
               });
               console.log('FCM token stored.');
             }
@@ -38,15 +38,8 @@ export const NotificationManager = ({ uid }: { uid: string }) => {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
         if (change.type === 'added') {
-          const data = change.doc.data();
-          if (Notification.permission === 'granted') {
-            new Notification(data.title || 'New Notification', {
-              body: data.body,
-              icon: '/icons/Your_Finances_Logo.png'
-            });
-            // Mark as read
-            updateDoc(doc(db, `users/${uid}/notifications`, change.doc.id), { isRead: true });
-          }
+          // Just mark as read in database for badge count synchronization, leaving push/service worker to handle notification display cleanly
+          updateDoc(doc(db, `users/${uid}/notifications`, change.doc.id), { isRead: true });
         }
       });
     });
@@ -56,3 +49,4 @@ export const NotificationManager = ({ uid }: { uid: string }) => {
 
   return <div className="absolute z-[9999]" />;
 };
+

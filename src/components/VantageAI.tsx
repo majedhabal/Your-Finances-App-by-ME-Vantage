@@ -7,6 +7,7 @@ import { VantageVoiceAssistant } from './VantageVoiceAssistant';
 import i18n from '../lib/i18n';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { getEffectiveAiTokens } from '../lib/tokenConsumption';
 import ReactMarkdown from 'react-markdown';
 import { getNavigationGuide, NavigationGuide } from '../lib/navigationGuideHelper';
 
@@ -111,12 +112,17 @@ export const VantageAI: React.FC<VantageAIProps> = ({
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageRef = useRef<HTMLDivElement>(null);
 
-    // Listen for historical chat opening events and pending chat global on mount
+    const generateMessageId = () => {
+    return `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  };
+
+  // Listen for historical chat opening events and pending chat global on mount
   useEffect(() => {
     const handleOpenChat = (e: any) => {
       const convo = e.detail;
       if (convo && convo.messages) {
-        setMessages(convo.messages.map((m: any) => ({
+        setMessages(convo.messages.map((m: any, mIdx: number) => ({
+          id: m.id || `convo-msg-${mIdx}-${Math.random().toString(36).substring(2, 9)}`,
           sender: m.sender,
           text: m.text
         })));
@@ -133,7 +139,8 @@ export const VantageAI: React.FC<VantageAIProps> = ({
     if (window.__vantage_active_chat) {
       const convo = window.__vantage_active_chat;
       if (convo && convo.messages) {
-        setMessages(convo.messages.map((m: any) => ({
+        setMessages(convo.messages.map((m: any, mIdx: number) => ({
+          id: m.id || `active-msg-${mIdx}-${Math.random().toString(36).substring(2, 9)}`,
           sender: m.sender,
           text: m.text
         })));
@@ -160,7 +167,8 @@ export const VantageAI: React.FC<VantageAIProps> = ({
   if (!isOpen) return null;
 
   const tierClean = (profile?.subscriptionTier || 'free').toLowerCase().replace(' ', '');
-  const isPremium = tierClean === 'tier2' || tierClean === 'tier3' || tierClean === 'premium' || !!(profile?.vantageAiUnlockedUntil && new Date(profile.vantageAiUnlockedUntil).getTime() > Date.now()) || (typeof profile?.vantageAiTokens === 'number' && profile.vantageAiTokens > 0);
+  const effectiveTokens = getEffectiveAiTokens(profile);
+  const isPremium = tierClean === 'tier2' || tierClean === 'tier3' || tierClean === 'premium' || !!(profile?.vantageAiUnlockedUntil && new Date(profile.vantageAiUnlockedUntil).getTime() > Date.now()) || effectiveTokens > 0;
 
   const handleClaimSandboxTokens = async () => {
     if (!profile?.uid) return;
@@ -168,6 +176,7 @@ export const VantageAI: React.FC<VantageAIProps> = ({
       const userRef = doc(db, 'users', profile.uid);
       await updateDoc(userRef, { 
         vantageAiTokens: 50000,
+        aiTokens: 50000,
         subscriptionTier: 'tier 3',
         isPremium: true
       });
@@ -179,7 +188,7 @@ export const VantageAI: React.FC<VantageAIProps> = ({
   const handleExecuteInsightTaskDirect = async (userMessage: string) => {
     if (!userMessage) return;
 
-    const currentTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+    const currentTokens = effectiveTokens;
     
     // Check if trends, forecasting, or comprehensive record reading keywords are present
     const lowerMessage = userMessage.toLowerCase();
@@ -196,7 +205,7 @@ export const VantageAI: React.FC<VantageAIProps> = ({
     setActiveQuery(userMessage);
     setQueryInput('');
     setResponse(null);
-    setMessages(prev => [...prev, { sender: 'user', text: userMessage }]);
+    setMessages(prev => [...prev, { id: generateMessageId(), sender: 'user', text: userMessage }]);
 
     try {
       const payload = {
@@ -214,7 +223,7 @@ export const VantageAI: React.FC<VantageAIProps> = ({
       const aiResponse = result || t('vantage_ai.empty_response');
       
       setResponse(aiResponse);
-      setMessages(prev => [...prev, { sender: 'ai', text: aiResponse, guide }]);
+      setMessages(prev => [...prev, { id: generateMessageId(), sender: 'ai', text: aiResponse, guide }]);
 
       // Save complete new chat entry into local storage under the active user's key
       if (uid) {
@@ -255,13 +264,13 @@ export const VantageAI: React.FC<VantageAIProps> = ({
       if (profile?.uid) {
         const userRef = doc(db, 'users', profile.uid);
         const nextTokens = Math.max(0, currentTokens - tokenCost);
-        await updateDoc(userRef, { vantageAiTokens: nextTokens });
+        await updateDoc(userRef, { vantageAiTokens: nextTokens, aiTokens: nextTokens });
       }
     } catch (err) {
       console.error("Assistant execution failure:", err);
       const errResponse = t('vantage_ai.error_response');
       setResponse(errResponse);
-      setMessages(prev => [...prev, { sender: 'ai', text: errResponse }]);
+      setMessages(prev => [...prev, { id: generateMessageId(), sender: 'ai', text: errResponse }]);
     } finally {
       setLoading(false);
     }
@@ -302,7 +311,7 @@ export const VantageAI: React.FC<VantageAIProps> = ({
                 <h3 className="font-headline-md text-base text-neutral-800 m-0" style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}>{t('vantage_ai.title')}</h3>
                 <div className="flex flex-col gap-1 mt-0.5">
                   <span className="text-[12px] text-[#366945] font-normal" style={{ fontFamily: "'Google Sans', sans-serif" }}>
-                    {t('vantage_ai.tokens', { count: typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens.toLocaleString() : '0' })}
+                    {t('vantage_ai.tokens', { count: effectiveTokens.toLocaleString() })}
                   </span>
                   <button
                     onClick={handleClaimSandboxTokens}
@@ -366,7 +375,7 @@ export const VantageAI: React.FC<VantageAIProps> = ({
                 
                 {messages.map((msg, index) => (
                   <div 
-                    key={msg.id || `msg-${index}-${msg.sender}`} 
+                    key={msg.id} 
                     ref={index === messages.length - 1 ? lastMessageRef : null}
                     className={`flex w-full ${msg.sender === 'user' ? 'justify-end pl-12' : 'justify-start pr-12'} leading-relaxed box-border my-2`}
                   >

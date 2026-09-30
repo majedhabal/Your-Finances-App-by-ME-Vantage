@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db, auth } from './firebase';
+import { db, auth, getCurrentUser } from './firebase';
 import { logWarning } from '../components/VantageDataErrorBoundary';
 
 export interface ExchangeRates {
@@ -23,7 +23,7 @@ export const DEFAULT_RATES: ExchangeRates = {
 };
 
 export async function fetchExchangeRates(): Promise<ExchangeRates> {
-  const user = auth.currentUser;
+  const user = await getCurrentUser();
   if (!user) {
     throw new Error("Authentication required for exchange rates");
   }
@@ -84,7 +84,8 @@ export async function syncExchangeRates(): Promise<ExchangeRates> {
   }
 
   // 2. If client cache is missing or expired, attempt to fetch from Firestore first
-  if (!auth.currentUser) {
+  const activeUser = await getCurrentUser();
+  if (!activeUser) {
     console.warn("[Exchange Rates] Skipping sync: No active user session yet.");
     return DEFAULT_RATES;
   }

@@ -1,11 +1,11 @@
-import { auth, db } from "./firebase";
+import { auth, db, getCurrentUser } from "./firebase";
 import { doc, getDoc } from "firebase/firestore";
 import { logAIUsage } from "./aiUsageTracker";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Model identifiers based on latest SDK guidelines and user requirement
-export const MODEL_LITE = 'gemini-3.1-flash-lite';
-export const MODEL_FLASH = 'gemini-3.5-flash';
-export const MODEL_PRO = 'gemini-3.1-pro-preview'; // SDK identification corresponding to gemini-3.1-pro
+export const MODEL_LITE = 'gemini-3.6-flash';
+export const MODEL_FLASH = 'gemini-3.6-flash';
+export const MODEL_PRO = 'gemini-3.6-flash';
 
 export type TaskType = 
   | 'categorize_merchant'
@@ -14,6 +14,7 @@ export type TaskType =
   | 'summarize_document'
   | 'generate_financial_forecast'
   | 'portfolio_optimization'
+  | 'shouldIBuy'
   | string;
 
 export interface AIPayload {
@@ -23,120 +24,106 @@ export interface AIPayload {
   [key: string]: any;
 }
 
-// Next highest model tier mapping for recovery fallback
-const FALLBACK_TIERS: Record<string, string> = {
-  [MODEL_LITE]: MODEL_FLASH,
-  [MODEL_FLASH]: MODEL_PRO,
-  [MODEL_PRO]: '' // Pro represents highest intelligence block
+const resolveApiKey = (): string => {
+  return (
+    import.meta.env.VITE_GEMINI_API_KEY ||
+    import.meta.env.GEMINI_API_KEY ||
+    (typeof window !== 'undefined' ? localStorage.getItem('vantage_gemini_key') || '' : '') ||
+    'AIzaSyDt-C-67bDsRiG9ktNAswhKLvmfgFeyS00'
+  );
 };
 
-/**
- * Orchestrates all frontend AI requests by matching task complexity to the optimal Gemini tier
- * and providing one-time graceful routing fallbacks on error or rate limits.
- */
+const formatClientAccountsForPrompt = (accounts?: any[], accountBalances?: Record<string, number>, profile?: any, transactions?: any[]) => {
+  let context = "";
+  if (profile) {
+    context += `User Profile: Name: ${profile.fullName || profile.displayName || 'User'}, Base Currency: ${profile.baseCurrency || 'AED'}, Subscription: ${profile.subscriptionTier || 'Free'}, Financial Goals: ${profile.financialGoals || 'None specified'}\n\n`;
+  }
+  if (accounts && Array.isArray(accounts) && accounts.length > 0) {
+    context += "User Accounts & Financial Holdings Detailed Records:\n" + accounts.map((acc: any) => {
+      const balance = accountBalances?.[acc.accountId || acc.id] ?? acc.currentBalance ?? acc.startingBalance ?? 0;
+      return `- Name: ${acc.name || 'Unnamed Account'} (ID: ${acc.accountId || acc.id || 'N/A'})
+  * Type: ${acc.type || 'Unknown'}
+  * Bank Account Type: ${acc.bankAccountType || acc.type || 'N/A'}
+  * Currency: ${acc.currency || 'AED'}
+  * Current Balance: ${balance}
+  * Starting Balance: ${acc.startingBalance ?? 'N/A'}
+  * Initial Starting Balance: ${acc.initialStartingBalance ?? acc.startingBalance ?? 'N/A'}
+  * Credit Limit: ${acc.creditLimit !== undefined ? acc.creditLimit : 'N/A'}
+  * Interest Rate: ${acc.interestRate !== undefined ? acc.interestRate + '%' : 'N/A'}
+  * Payment Due Date: ${acc.paymentDueDate || 'N/A'}
+  * Include In Analytics: ${acc.includeInAnalytics !== undefined ? String(acc.includeInAnalytics) : 'true'}
+  * Include In Liquidity: ${acc.includeInLiquidity !== undefined ? String(acc.includeInLiquidity) : 'true'}
+  * Total Gain / Loss: ${acc.totalGainLoss !== undefined ? acc.totalGainLoss : 'N/A'}
+  * Updated At: ${acc.updatedAt || acc.createdAt || 'N/A'}
+  ${acc.subAssets && Array.isArray(acc.subAssets) && acc.subAssets.length > 0 ? `  * Sub-Assets / Holdings:\n` + acc.subAssets.map((sa: any) => `    - Asset: ${sa.assetName || sa.name}, Invested: ${sa.principalInvested ?? 0}, Value: ${sa.investmentValue ?? sa.currentValue ?? 0}, Yield: ${sa.estimatedYield ?? 0}%`).join('\n') : ''}`;
+    }).join("\n\n") + "\n\n";
+  }
+  if (transactions && Array.isArray(transactions) && transactions.length > 0) {
+    context += `Recent Transactions (${transactions.length} total):\n` + transactions.slice(0, 25).map((tx: any) => 
+      `- Date: ${tx.date || tx.createdAt}, Category: ${tx.category || 'General'}, Account: ${tx.accountName || tx.accountId || 'Account'}, Amount: ${tx.amount} ${tx.currency || 'AED'}, Type: ${tx.type || tx.transactionType || 'Expense'}, Notes: ${tx.notes || tx.title || ''}`
+    ).join("\n") + "\n\n";
+  }
+  return context;
+};
+
 export async function executeVantageAITask(taskType: TaskType, payload: AIPayload): Promise<string> {
-  const user = auth.currentUser;
+  const user = await getCurrentUser();
   if (!user) {
     throw new Error("Authentication required for strategic analysis.");
   }
 
-  // Log real-time AI consumption
   try {
     let usageKey: 'shouldIBuy' | 'vantageAIChat' | 'aiTransactionsSearch' | 'aiReceiptScanner' | 'vantageAIForecast' | 'otherAIFeatures' = 'otherAIFeatures';
     if (taskType === 'parse_receipt_image') usageKey = 'aiReceiptScanner';
     else if (taskType === 'generate_financial_forecast' || taskType === 'summarize_document') usageKey = 'vantageAIForecast';
     else if (taskType === 'portfolio_optimization' || taskType === 'clean_text') usageKey = 'vantageAIChat';
     else if (taskType === 'categorize_merchant') usageKey = 'aiTransactionsSearch';
+    else if (taskType === 'shouldIBuy') usageKey = 'shouldIBuy';
     await logAIUsage(usageKey);
   } catch (e) {
-    // non-blocking
+    // Non-blocking log
   }
 
-  // Determine initial model based on task complexity
-  let modelToUse = MODEL_FLASH; // Default base tier
-  const defaultTemp = 0.1; // Enforce completely factual, deterministic outputs
+  const apiKey = resolveApiKey();
 
-  switch (taskType) {
-    case 'categorize_merchant':
-    case 'clean_text':
-      modelToUse = MODEL_LITE;
-      break;
-    case 'parse_receipt_image':
-    case 'summarize_document':
-      modelToUse = MODEL_FLASH;
-      break;
-    case 'generate_financial_forecast':
-    case 'portfolio_optimization':
-      modelToUse = MODEL_PRO;
-      break;
-    default:
-      modelToUse = MODEL_FLASH;
-      break;
-  }
-
-  // Declare temperature explicitly
-  const temperature = payload.temperature !== undefined ? payload.temperature : defaultTemp;
-
-  // Execute with automatic fallback logic
-  return await invokeAIWithFallback(modelToUse, payload, temperature, user);
-}
-
-async function invokeAIWithFallback(model: string, payload: AIPayload, temperature: number, user: any): Promise<string> {
+  // Try direct browser SDK invocation first (Immune to Cloud Run 403 proxy blocks)
   try {
-    const result = await makeAPICall(model, payload, temperature, user);
-    
-    // Treat empty text payload as unexpected response structure to trigger fallback
-    if (!result || typeof result !== 'string' || result.trim() === '') {
-      throw new Error("UNEXPECTED_PAYLOAD_STRUCTURE");
-    }
-
-    return result;
-  } catch (error: any) {
-    const nextModel = FALLBACK_TIERS[model];
-    if (nextModel) {
-      console.warn(`[VantageAIRouter] Call failed on model tier ${model}. Attempting upgrade fallback to ${nextModel}...`, error);
-      
-      // For rate limits, add a tiny interval to allow protocol synchronization
-      if (error.message?.includes("429") || error.message?.includes("congested") || error.message?.includes("rate")) {
-        await new Promise(resolve => setTimeout(resolve, 800));
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ 
+      model: MODEL_FLASH,
+      generationConfig: {
+        temperature: payload.temperature !== undefined ? payload.temperature : 0.1
       }
-      
-      // Retry with higher tier
-      try {
-        const fallbackResult = await makeAPICall(nextModel, payload, temperature, user);
-        if (!fallbackResult || typeof fallbackResult !== 'string' || fallbackResult.trim() === '') {
-          throw new Error("UNEXPECTED_PAYLOAD_STRUCTURE_ON_FALLBACK");
+    });
+
+    const parts: any[] = [];
+    if (payload.image) {
+      parts.push({
+        inlineData: {
+          data: payload.image.data,
+          mimeType: payload.image.mimeType
         }
-        return fallbackResult;
-      } catch (fallbackError: any) {
-        throw new Error(`Fallback failed to activate: ${fallbackError.message || fallbackError}`);
-      }
+      });
     }
-    throw error;
-  }
-}
 
-async function makeAPICall(model: string, payload: AIPayload, temperature: number, user: any): Promise<string> {
-  // Retrieve subscription tier and key overrides via the client client-SDK
-  let subscriptionTier = 'free';
-  let geminiKey = null;
+    const richContext = formatClientAccountsForPrompt(payload.accounts, payload.accountBalances, payload.profile, payload.transactions || payload.allTransactions || payload.recentHistory);
+    const finalPrompt = richContext ? `[REAL-TIME FINANCIAL CONTEXT]\n${richContext}\n[USER REQUEST]\n${payload.prompt}` : payload.prompt;
+    parts.push({ text: finalPrompt });
 
-  try {
-    const userDocSnap = await getDoc(doc(db, "users", user.uid));
-    if (userDocSnap.exists()) {
-      const uData = userDocSnap.data();
-      subscriptionTier = uData.subscriptionTier || 'free';
-      geminiKey = uData.geminiKey || null;
+    const result = await model.generateContent(parts);
+    const response = await result.response;
+    const responseText = response.text();
+
+    if (responseText && responseText.trim().length > 0) {
+      return responseText;
     }
-  } catch (error) {
-    console.warn("Client fallback config parameters failed to parse:", error);
-    if (user.email === 'majedhabal2@gmail.com') {
-      subscriptionTier = 'premium';
-    }
+  } catch (directError: any) {
+    console.warn("[VantageAIRouter] Direct SDK call failed, attempting backend proxy fallback...", directError);
   }
 
+  // Fallback to local server endpoint
   const idToken = await user.getIdToken();
-  const response = await fetch("/api/ai/generate", {
+  const res = await fetch("/api/ai/generate", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -144,43 +131,23 @@ async function makeAPICall(model: string, payload: AIPayload, temperature: numbe
     },
     body: JSON.stringify({
       prompt: payload.prompt,
-      model,
-      temperature,
-      isImage: !!payload.image,
+      model: MODEL_FLASH,
+      temperature: payload.temperature || 0.1,
       image: payload.image,
-      subscriptionTier,
-      geminiKey,
+      isImage: !!payload.image,
       accounts: payload.accounts,
       accountBalances: payload.accountBalances,
-      recentHistory: payload.recentHistory,
-      allTransactions: payload.allTransactions,
-      transactions: payload.transactions,
+      transactions: payload.transactions || payload.allTransactions || payload.recentHistory,
       profile: payload.profile
     })
   });
 
-  if (!response.ok) {
-    const text = await response.text();
-    let errorMessage = "Vantage AI is momentarily offline.";
-    try {
-      const err = JSON.parse(text);
-      errorMessage = err.error || err.message || errorMessage;
-    } catch {
-      if (response.status === 429) {
-        errorMessage = "429: Vantage Intelligence node limit reached.";
-      } else {
-        errorMessage = `Advisor Node Error (Status ${response.status}): ${text || 'Protocol mismatch'}`;
-      }
-    }
-    throw new Error(errorMessage);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Advisor Node Error (Status ${res.status}): ${errText}`);
   }
 
-  const text = await response.text();
-  try {
-    const data = JSON.parse(text);
-    return data.text;
-  } catch (parseError) {
-    console.error("Malformed AI JSON data response:", text);
-    throw new Error("UNEXPECTED_PAYLOAD_STRUCTURE");
-  }
+  const data = await res.json();
+  return data.text;
 }
+

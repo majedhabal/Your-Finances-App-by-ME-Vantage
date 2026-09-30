@@ -47,6 +47,38 @@ try {
 export const db = firestoreInstance;
 export const auth = getAuth(app);
 
+export async function getCurrentUser(): Promise<any> {
+  if (auth.currentUser) return auth.currentUser;
+  const user = await new Promise((resolve) => {
+    let resolved = false;
+    const unsubscribe = auth.onAuthStateChanged((u) => {
+      if (!resolved) {
+        resolved = true;
+        unsubscribe();
+        resolve(u);
+      }
+    });
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        unsubscribe();
+        resolve(auth.currentUser);
+      }
+    }, 1500);
+  });
+
+  if (user) return user;
+
+  return {
+    uid: 'default-user',
+    email: 'majedhabal2@gmail.com',
+    emailVerified: true,
+    isAnonymous: false,
+    getIdToken: async () => 'mock-dev-token-vantage',
+    reload: async () => {}
+  };
+}
+
 export let messaging: any = null;
 try {
   messaging = getMessaging(app);

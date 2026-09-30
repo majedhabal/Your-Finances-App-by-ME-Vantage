@@ -7,6 +7,7 @@ import { VantageLogo } from './VantageLogo';
 import { triggerHaptic, hapticPresets } from '../lib/haptics';
 import { Settings as SettingsIcon, WifiOff, Home, Landmark, Activity, TrendingUp, BrainCircuit, Plus, Camera, Coffee, Sparkles, ChevronDown, ShoppingCart, UserPlus, Mic } from 'lucide-react';
 import { TokenShopModal } from './TokenShopModal';
+import { getEffectiveAiTokens } from '../lib/tokenConsumption';
 import { Settings } from './Settings';
 import { NotificationDispatchHub } from './NotificationDispatchHub';
 import { StreakTracker } from './StreakTracker';
@@ -413,14 +414,14 @@ export const Layout: React.FC<LayoutProps> = ({
                 </button>
                 <span className="text-[11px] font-mono font-bold text-[#A6DDB1]">
                   {(() => {
-                    const remaining = typeof profile.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+                    const remaining = getEffectiveAiTokens(profile);
                     const maxTokens = Math.max(getBaseMaxTokens(profile.subscriptionTier), remaining, 50000);
                     return `${remaining.toLocaleString()} / ${maxTokens.toLocaleString()}`;
                   })()}
                 </span>
               </div>
               {(() => {
-                const remaining = typeof profile.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+                const remaining = getEffectiveAiTokens(profile);
                 const maxTokens = Math.max(getBaseMaxTokens(profile.subscriptionTier), remaining, 50000);
                 const usedPct = maxTokens > 0 ? ((maxTokens - remaining) / maxTokens) * 100 : 0;
                 

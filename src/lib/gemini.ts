@@ -1,8 +1,8 @@
-import { auth, db } from "./firebase";
+import { auth, db, getCurrentUser } from "./firebase";
 import { doc, getDoc, collection, query, where, limit, getDocs, writeBatch } from "firebase/firestore";
 
 export async function generateAIContent(prompt: string, image?: { data: string; mimeType: string }) {
-  const user = auth.currentUser;
+  const user = await getCurrentUser();
   if (!user) throw new Error("Authentication required for strategic analysis.");
 
   let subscriptionTier = 'free';

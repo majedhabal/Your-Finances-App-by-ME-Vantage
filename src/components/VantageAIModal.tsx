@@ -6,6 +6,7 @@ import { PremiumMarketingCard } from './PremiumMarketingCard';
 import { useTranslation } from '@/lib/i18n';
 import { doc, updateDoc, collection, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { getEffectiveAiTokens } from '../lib/tokenConsumption';
 
 interface VantageAIModalProps {
   isOpen: boolean;
@@ -20,7 +21,8 @@ interface VantageAIModalProps {
 export const VantageAIModal: React.FC<VantageAIModalProps> = ({ isOpen, onClose, uid, accounts, transactions, accountBalances, profile }) => {
   const { t } = useTranslation();
   const tierClean = (profile?.subscriptionTier || 'free').toLowerCase().replace(' ', '');
-  const hasAIAccess = tierClean === 'tier2' || tierClean === 'tier3' || tierClean === 'premium' || !!(profile?.vantageAiUnlockedUntil && new Date(profile.vantageAiUnlockedUntil).getTime() > Date.now()) || (typeof profile?.vantageAiTokens === 'number' && profile.vantageAiTokens > 0);
+  const effectiveTokens = getEffectiveAiTokens(profile);
+  const hasAIAccess = tierClean === 'tier2' || tierClean === 'tier3' || tierClean === 'premium' || !!(profile?.vantageAiUnlockedUntil && new Date(profile.vantageAiUnlockedUntil).getTime() > Date.now()) || effectiveTokens > 0;
   const [queryInput, setQueryInput] = useState('');
   const [activeQuery, setActiveQuery] = useState('');
   const [response, setResponse] = useState<string | null>(null);
@@ -93,7 +95,7 @@ export const VantageAIModal: React.FC<VantageAIModalProps> = ({ isOpen, onClose,
   const handleQuery = async (text: string) => {
     if (!text.trim()) return;
 
-    const currentTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+    const currentTokens = getEffectiveAiTokens(profile);
     const tokenCost = 1500; // AI Transaction Search (NLP Search)
 
     if (currentTokens < tokenCost) {
@@ -194,7 +196,7 @@ export const VantageAIModal: React.FC<VantageAIModalProps> = ({ isOpen, onClose,
       if (profile?.uid) {
         const userRef = doc(db, 'users', profile.uid);
         const nextTokens = Math.max(0, currentTokens - tokenCost);
-        await updateDoc(userRef, { vantageAiTokens: nextTokens });
+        await updateDoc(userRef, { vantageAiTokens: nextTokens, aiTokens: nextTokens });
       }
     } catch (error: any) {
       console.error("Vantage AI Error:", error);
@@ -235,7 +237,7 @@ export const VantageAIModal: React.FC<VantageAIModalProps> = ({ isOpen, onClose,
                     </h2>
                     <div className="flex items-center gap-3 mt-1 flex-wrap">
                       <span className="text-[2vw] text-vantage-muted font-normal" style={{ fontFamily: "'Google Sans', sans-serif" }}>
-                        {hasAIAccess ? t('vantage_ai_modal.tokens_remaining', { count: typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens.toLocaleString() : '0' }) : t('vantage_ai_modal.premium_interface', 'Premium Assistant Interface')}
+                        {hasAIAccess ? t('vantage_ai_modal.tokens_remaining', { count: effectiveTokens.toLocaleString() }) : t('vantage_ai_modal.premium_interface', 'Premium Assistant Interface')}
                       </span>
                       <button
                         onClick={handleClaimSandboxTokens}

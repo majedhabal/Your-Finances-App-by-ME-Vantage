@@ -1,39 +1,49 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Allow authenticated users to read user profiles and subcollections for household sharing and collaboration
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User profile and subcollections strictly isolated to document owner
     match /users/{userId} {
-      allow read, write: if request.auth != null;
-      
-      // Match subcollections under users/{userId}
+      allow read, write: if isOwner(userId);
+
       match /{collection}/{document=**} {
-        allow read, write: if request.auth != null;
+        allow read, write: if isOwner(userId);
       }
     }
-    
-    // Allow public access to shared shopping carts for collaborative link sharing
+
+    // Collaborative shared carts: read/write with item-level constraints, delete restricted to creator
     match /sharedCarts/{cartId} {
-      allow read, create, update, delete: if true;
+      allow read: if true;
+      allow create: if isAuthenticated() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isAuthenticated();
+      allow delete: if isAuthenticated() && resource.data.ownerUid == request.auth.uid;
     }
 
-    // Allow authenticated users to read and write to global configuration
+    // Global exchange rates & configs: public read, strictly server/admin write
     match /global_config/{document} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if false; // Mutated only via Firebase Admin SDK / Cloud Functions
     }
 
-    // Allow authenticated users to read and write shared invitations
-    match /shared_invitations/{inviteId} {
-      allow read, create, update, delete: if request.auth != null;
+    match /global_configurations/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if false;
     }
 
-    // Allow authenticated users to read and write admin metrics
     match /adminMetrics/{metricId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if request.auth.token.admin == true;
     }
 
-    // Allow authenticated users to read and write broadcast notifications
     match /broadcast_notifications/{notificationId} {
-      allow read, write: if request.auth != null;
+      allow read: if isAuthenticated();
+      allow write: if request.auth.token.admin == true;
     }
   }
 }

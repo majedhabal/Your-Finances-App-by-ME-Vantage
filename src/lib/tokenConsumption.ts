@@ -1,4 +1,4 @@
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
 import { db } from './firebase';
 
 export interface TokenBalanceInfo {
@@ -8,9 +8,19 @@ export interface TokenBalanceInfo {
   receiptScans: number;
 }
 
+export function getEffectiveAiTokens(profile: any): number {
+  if (typeof profile?.vantageAiTokens === 'number') {
+    return profile.vantageAiTokens;
+  }
+  if (typeof profile?.aiTokens === 'number') {
+    return profile.aiTokens;
+  }
+  return 0;
+}
+
 export function getTokenAndScanInfo(profile: any): TokenBalanceInfo {
   const giftTokens = typeof profile?.giftTokens === 'number' ? profile.giftTokens : (typeof profile?.freeAiTokens === 'number' ? profile.freeAiTokens : 0);
-  const creditTokens = typeof profile?.vantageAiTokens === 'number' ? profile.vantageAiTokens : 0;
+  const creditTokens = getEffectiveAiTokens(profile);
   const receiptScans = typeof profile?.receiptScans === 'number' ? profile.receiptScans : 0;
   return {
     giftTokens,
@@ -26,37 +36,41 @@ export async function consumeAiTokensAndScans(
   tokenCost: number,
   receiptScanCount: number = 0
 ): Promise<{ giftTokens: number; creditTokens: number; receiptScans: number }> {
-  const info = getTokenAndScanInfo(profile);
+  if (!uid) throw new Error("Authentication required for token billing.");
 
-  // Priority 1: Free scan receipts over tokens
-  const scansUsingFree = Math.min(info.receiptScans, receiptScanCount);
+  const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+  const currentProfile = snap.exists() ? snap.data() : profile;
+
+  const giftTokens = typeof currentProfile?.giftTokens === 'number' ? currentProfile.giftTokens : (typeof currentProfile?.freeAiTokens === 'number' ? currentProfile.freeAiTokens : 0);
+  const creditTokens = getEffectiveAiTokens(currentProfile);
+  const receiptScans = typeof currentProfile?.receiptScans === 'number' ? currentProfile.receiptScans : 0;
+
+  const scansUsingFree = Math.min(receiptScans, receiptScanCount);
   const scansUsingTokens = receiptScanCount - scansUsingFree;
   const effectiveTokenCost = tokenCost + (scansUsingTokens * 4500);
 
-  // Priority 2: Free gift tokens over user credit (vantageAiTokens)
-  const totalAvailableTokens = info.giftTokens + info.creditTokens;
-  if (totalAvailableTokens < effectiveTokenCost) {
+  const totalAvailable = giftTokens + creditTokens;
+  if (totalAvailable < effectiveTokenCost) {
     throw new Error(
-      `Insufficient AI tokens remaining. Operation requires ${effectiveTokenCost.toLocaleString()} tokens (Free Gift: ${info.giftTokens.toLocaleString()}, Credit: ${info.creditTokens.toLocaleString()}). Please upgrade or claim free gift tokens.`
+      `Insufficient AI tokens remaining. Operation requires ${effectiveTokenCost.toLocaleString()} tokens (Available: ${totalAvailable.toLocaleString()}). Please claim sandbox tokens or upgrade.`
     );
   }
 
-  const deductGift = Math.min(info.giftTokens, effectiveTokenCost);
-  const remainingCost = effectiveTokenCost - deductGift;
+  const deductGift = Math.min(giftTokens, effectiveTokenCost);
+  const remainder = effectiveTokenCost - deductGift;
 
-  const nextGiftTokens = info.giftTokens - deductGift;
-  const nextCreditTokens = info.creditTokens - remainingCost;
-  const nextReceiptScans = info.receiptScans - scansUsingFree;
+  const nextGiftTokens = giftTokens - deductGift;
+  const nextCreditTokens = creditTokens - remainder;
+  const nextReceiptScans = receiptScans - scansUsingFree;
 
-  if (uid) {
-    const userRef = doc(db, 'users', uid);
-    await updateDoc(userRef, {
-      giftTokens: nextGiftTokens,
-      vantageAiTokens: nextCreditTokens,
-      receiptScans: nextReceiptScans,
-      updatedAt: serverTimestamp()
-    });
-  }
+  await updateDoc(userRef, {
+    giftTokens: nextGiftTokens,
+    vantageAiTokens: nextCreditTokens,
+    aiTokens: nextCreditTokens,
+    receiptScans: nextReceiptScans,
+    updatedAt: serverTimestamp()
+  });
 
   return {
     giftTokens: nextGiftTokens,
@@ -64,3 +78,5 @@ export async function consumeAiTokensAndScans(
     receiptScans: nextReceiptScans
   };
 }
+
+

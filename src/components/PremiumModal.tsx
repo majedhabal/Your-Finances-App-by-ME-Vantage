@@ -146,6 +146,7 @@ export const PremiumModal: React.FC<PremiumModalProps> = ({ isOpen, onClose, uid
       await updateDoc(userRef, { 
         subscriptionTier: mappedTier,
         vantageAiTokens: targetPlan.tokens,
+        aiTokens: targetPlan.tokens,
         isPremium: true,
         premiumSince: new Date().toISOString(),
         hasAcceptedTerms: true
@@ -154,6 +155,7 @@ export const PremiumModal: React.FC<PremiumModalProps> = ({ isOpen, onClose, uid
         ...profile, 
         subscriptionTier: mappedTier, 
         vantageAiTokens: targetPlan.tokens,
+        aiTokens: targetPlan.tokens,
         isPremium: true, 
         hasAcceptedTerms: true 
       });
@@ -192,6 +194,7 @@ export const PremiumModal: React.FC<PremiumModalProps> = ({ isOpen, onClose, uid
         isPremium: false,
         subscriptionTier: 'free',
         vantageAiTokens: 0,
+        aiTokens: 0,
         premiumSince: null
       });
       onSuccess({ 
@@ -199,6 +202,7 @@ export const PremiumModal: React.FC<PremiumModalProps> = ({ isOpen, onClose, uid
         isPremium: false,
         subscriptionTier: 'free',
         vantageAiTokens: 0,
+        aiTokens: 0,
         premiumSince: null
       });
       onClose();

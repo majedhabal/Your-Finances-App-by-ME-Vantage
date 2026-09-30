@@ -676,6 +676,40 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
     }
   };
 
+  const handleTestNotification = async () => {
+    if ('Notification' in window) {
+      if (Notification.permission !== 'granted') {
+        const perm = await Notification.requestPermission();
+        if (perm !== 'granted') {
+          alert('Notification permission was not granted. Please enable notifications in your device settings.');
+          return;
+        }
+      }
+    }
+    sendDeviceNotification(
+      "🔔 Test Reminder Notification",
+      "Notifications are active and working successfully!"
+    );
+    playNotificationSound();
+
+    const toastId = `vantage-toast-${Date.now()}`;
+    const toastEl = document.createElement('div');
+    toastEl.id = toastId;
+    toastEl.className = "fixed top-6 left-1/2 -translate-x-1/2 z-[300] bg-[#1E293B] border-2 border-[#A6DDB1] text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-bounce";
+    toastEl.style.fontFamily = "'Google Sans', sans-serif";
+    toastEl.innerHTML = `
+      <div class="text-[#A6DDB1] text-lg font-bold">🔔</div>
+      <div class="flex flex-col text-left">
+        <span class="text-[12px] font-bold text-[#A6DDB1]">Test Notification Sent</span>
+        <span class="text-xs font-normal text-neutral-100 mt-0.5">Notifications are working properly!</span>
+      </div>
+    `;
+    document.body.appendChild(toastEl);
+    setTimeout(() => {
+      toastEl.remove();
+    }, 4000);
+  };
+
   // Two-step confirmation state
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -2546,6 +2580,15 @@ export const NotificationDispatchHub: React.FC<NotificationDispatchHubProps> = (
                             />
                           </div>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={handleTestNotification}
+                          style={{ fontFamily: "'Google Sans', sans-serif", fontWeight: 700 }}
+                          className="mt-1 w-full h-[32px] bg-neutral-900 text-white rounded-lg text-[11px] hover:bg-neutral-800 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <span>🔔 Test Device Notification Now</span>
+                        </button>
                       </motion.div>
                     )}
                   </form>
